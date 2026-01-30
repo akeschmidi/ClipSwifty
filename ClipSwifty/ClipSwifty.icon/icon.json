@@ -1,0 +1,56 @@
+{
+  "fill" : "automatic",
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "pfeil_clipgrapy.png",
+          "name" : "pfeil_clipgrapy",
+          "position" : {
+            "scale" : 1.2,
+            "translation-in-points" : [
+              206.2578125,
+              -39.015625
+            ]
+          }
+        },
+        {
+          "image-name" : "pfeil2_clipgrapy.png",
+          "name" : "pfeil2_clipgrapy",
+          "position" : {
+            "scale" : 1.8,
+            "translation-in-points" : [
+              10.734375,
+              5.453125
+            ]
+          }
+        },
+        {
+          "image-name" : "hintergrund_clipgrapy.png",
+          "name" : "hintergrund_clipgrapy",
+          "position" : {
+            "scale" : 2.2,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
