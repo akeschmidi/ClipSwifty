@@ -232,9 +232,51 @@ struct SettingsView: View {
             } header: {
                 Label("About", systemImage: "info.circle")
             }
+
+            // Support
+            Section {
+                Link(destination: URL(string: "https://buymeacoffee.com/akeschmidii")!) {
+                    HStack(spacing: 12) {
+                        Text("☕")
+                            .font(.system(size: 24))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Buy me a coffee")
+                                .font(.system(size: 14, weight: .medium))
+                            Text("Support the development")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "heart.fill")
+                            .foregroundStyle(.pink)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+
+                Link(destination: URL(string: "https://github.com/akeschmidi/ClipSwifty")!) {
+                    HStack {
+                        Image(systemName: "star.fill")
+                            .foregroundStyle(.yellow)
+                        Text("Star on GitHub")
+                        Spacer()
+                        Image(systemName: "arrow.up.right.square")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Label("Support", systemImage: "heart")
+            } footer: {
+                Text("ClipSwifty is free and open source. Your support helps keep it that way!")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 500, height: 800)
+        .frame(width: 500, height: 900)
     }
 
     private func selectOutputDirectory() {
