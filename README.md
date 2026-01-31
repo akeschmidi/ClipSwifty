@@ -143,7 +143,7 @@ ClipSwifty is released under the MIT License. See [LICENSE](LICENSE) for details
 ---
 
 <p align="center">
-  Made with ❤️ in Austria
+  Made with ❤️ in Switzerland
 </p>
 
 <p align="center">
