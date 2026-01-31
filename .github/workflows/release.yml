@@ -1,0 +1,181 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.2.1)'
+        required: true
+        type: string
+
+env:
+  APP_NAME: ClipSwifty
+  SCHEME: ClipSwifty
+  TEAM_ID: 34DTFQCK2V
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set version from tag or input
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install Apple certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # Create variables
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          # Decode certificate
+          echo -n "$CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+
+          # Create temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Import certificate to keychain
+          security import $CERTIFICATE_PATH -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+      - name: Update version in project
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          # Update Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_NAME/Info.plist" 2>/dev/null || \
+          agvtool new-marketing-version $VERSION
+
+          # Update build number
+          BUILD_NUMBER=$(date +%Y%m%d%H%M)
+          agvtool new-version -all $BUILD_NUMBER
+
+      - name: Build archive
+        run: |
+          xcodebuild archive \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -archivePath build/$APP_NAME.xcarchive \
+            -destination "generic/platform=macOS" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application: Stefan Schwinghammer ($TEAM_ID)" \
+            DEVELOPMENT_TEAM=$TEAM_ID \
+            OTHER_CODE_SIGN_FLAGS="--timestamp --options runtime"
+
+      - name: Export app
+        run: |
+          cat > build/ExportOptions.plist << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>developer-id</string>
+              <key>teamID</key>
+              <string>$TEAM_ID</string>
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>signingCertificate</key>
+              <string>Developer ID Application</string>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath build/$APP_NAME.xcarchive \
+            -exportOptionsPlist build/ExportOptions.plist \
+            -exportPath build/Export
+
+      - name: Sign embedded binaries
+        run: |
+          SIGNING_IDENTITY="Developer ID Application: Stefan Schwinghammer ($TEAM_ID)"
+          APP_PATH="build/Export/$APP_NAME.app"
+
+          # Sign yt-dlp and ffmpeg with hardened runtime
+          for binary in yt-dlp_macos ffmpeg; do
+            if [ -f "$APP_PATH/Contents/Resources/$binary" ]; then
+              codesign --force --options runtime --timestamp \
+                --sign "$SIGNING_IDENTITY" \
+                "$APP_PATH/Contents/Resources/$binary"
+              echo "✅ Signed $binary"
+            fi
+          done
+
+          # Re-sign the app bundle
+          codesign --force --deep --options runtime --timestamp \
+            --sign "$SIGNING_IDENTITY" \
+            "$APP_PATH"
+
+          echo "✅ App bundle signed"
+
+      - name: Verify signature
+        run: |
+          codesign --verify --deep --strict --verbose=2 "build/Export/$APP_NAME.app"
+          spctl --assess --type execute --verbose "build/Export/$APP_NAME.app"
+
+      - name: Create ZIP for notarization
+        run: |
+          cd build/Export
+          ditto -c -k --keepParent "$APP_NAME.app" "$APP_NAME.zip"
+
+      - name: Notarize app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool submit "build/Export/$APP_NAME.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$TEAM_ID" \
+            --wait
+
+      - name: Staple notarization ticket
+        run: |
+          xcrun stapler staple "build/Export/$APP_NAME.app"
+
+      - name: Create final ZIP
+        run: |
+          cd build/Export
+          rm -f "$APP_NAME.zip"
+          ditto -c -k --keepParent "$APP_NAME.app" "$APP_NAME.zip"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: ClipSwifty v${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          files: build/Export/${{ env.APP_NAME }}.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
