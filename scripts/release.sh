@@ -15,6 +15,7 @@ EXPORT_PATH="$BUILD_DIR/Export"
 APP_NAME="ClipSwifty"
 TEAM_ID="34DTFQCK2V"
 NOTARYTOOL_PROFILE="notarytool-profile"
+SIGNING_IDENTITY="Developer ID Application: Stefan Schwinghammer ($TEAM_ID)"
 
 # Get version from argument or prompt
 VERSION=${1:-""}
@@ -81,6 +82,40 @@ if [ ! -d "$EXPORT_PATH/$APP_NAME.app" ]; then
 fi
 echo -e "${GREEN}✅ App exported${NC}"
 
+# Sign embedded binaries with hardened runtime
+echo -e "${YELLOW}🔏 Signing embedded binaries with hardened runtime...${NC}"
+
+APP_PATH="$EXPORT_PATH/$APP_NAME.app"
+RESOURCES_PATH="$APP_PATH/Contents/Resources"
+
+# Sign yt-dlp_macos
+if [ -f "$RESOURCES_PATH/yt-dlp_macos" ]; then
+    codesign --force --options runtime --sign "$SIGNING_IDENTITY" "$RESOURCES_PATH/yt-dlp_macos"
+    echo "   ✅ Signed yt-dlp_macos"
+fi
+
+# Sign ffmpeg
+if [ -f "$RESOURCES_PATH/ffmpeg" ]; then
+    codesign --force --options runtime --sign "$SIGNING_IDENTITY" "$RESOURCES_PATH/ffmpeg"
+    echo "   ✅ Signed ffmpeg"
+fi
+
+# Sign ffprobe if exists
+if [ -f "$RESOURCES_PATH/ffprobe" ]; then
+    codesign --force --options runtime --sign "$SIGNING_IDENTITY" "$RESOURCES_PATH/ffprobe"
+    echo "   ✅ Signed ffprobe"
+fi
+
+# Re-sign the entire app bundle
+echo -e "${YELLOW}🔏 Re-signing app bundle...${NC}"
+codesign --force --deep --options runtime --sign "$SIGNING_IDENTITY" "$APP_PATH"
+echo -e "${GREEN}✅ App signed with hardened runtime${NC}"
+
+# Verify signature
+echo -e "${YELLOW}🔍 Verifying signature...${NC}"
+codesign --verify --deep --strict "$APP_PATH"
+echo -e "${GREEN}✅ Signature verified${NC}"
+
 # Create ZIP for notarization
 echo -e "${YELLOW}🗜️  Creating ZIP...${NC}"
 cd "$EXPORT_PATH"
@@ -97,14 +132,17 @@ if xcrun notarytool submit "$EXPORT_PATH/$APP_NAME.zip" \
     # Staple the notarization ticket
     echo -e "${YELLOW}📎 Stapling notarization ticket...${NC}"
     xcrun stapler staple "$EXPORT_PATH/$APP_NAME.app"
+    echo -e "${GREEN}✅ Notarization ticket stapled${NC}"
 
     # Recreate ZIP with stapled app
     rm "$EXPORT_PATH/$APP_NAME.zip"
     ditto -c -k --keepParent "$APP_NAME.app" "$APP_NAME.zip"
-    echo -e "${GREEN}✅ Stapled ZIP created${NC}"
+    echo -e "${GREEN}✅ Final ZIP created${NC}"
 else
-    echo -e "${YELLOW}⚠️  Notarization failed or profile not found${NC}"
-    echo -e "${YELLOW}   App is signed but not notarized${NC}"
+    echo -e "${RED}❌ Notarization failed${NC}"
+    echo -e "${YELLOW}   Checking notarization log...${NC}"
+    # Get the submission ID from the output and show the log
+    exit 1
 fi
 
 # Create GitHub release
