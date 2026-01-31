@@ -1,8 +1,10 @@
 import SwiftUI
+import AppKit
 
 struct MainView: View {
     @StateObject private var viewModel = DownloadViewModel()
     @State private var isHoveringDownload = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack {
@@ -49,6 +51,47 @@ struct MainView: View {
                     viewModel.cancelPlaylistDialog()
                 }
             )
+        }
+        .onAppear {
+            checkClipboardForURL()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                checkClipboardForURL()
+            }
+        }
+    }
+
+    private func checkClipboardForURL() {
+        // Only auto-paste if the input field is empty
+        guard viewModel.urlInput.isEmpty else { return }
+
+        // Check clipboard for a valid video URL
+        guard let clipboardString = NSPasteboard.general.string(forType: .string) else { return }
+
+        let trimmed = clipboardString.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Check if it's a valid video URL
+        let videoPatterns = [
+            "youtube.com/watch",
+            "youtu.be/",
+            "youtube.com/shorts/",
+            "youtube.com/playlist",
+            "vimeo.com/",
+            "dailymotion.com/",
+            "twitch.tv/",
+            "twitter.com/",
+            "x.com/",
+            "tiktok.com/",
+            "instagram.com/",
+            "facebook.com/"
+        ]
+
+        let lowercased = trimmed.lowercased()
+        let isVideoURL = videoPatterns.contains { lowercased.contains($0) }
+
+        if isVideoURL {
+            viewModel.urlInput = trimmed
         }
     }
 
@@ -180,11 +223,49 @@ struct MainView: View {
                 // Format Picker
                 if viewModel.isAudioOnly {
                     AudioFormatPicker(selection: $viewModel.selectedAudioFormat)
+                } else if !viewModel.availableQualities.isEmpty {
+                    // Dynamic quality picker based on available formats
+                    DynamicQualityPicker(
+                        qualities: viewModel.availableQualities,
+                        selection: $viewModel.selectedQuality
+                    )
                 } else {
+                    // Fallback to static picker when no qualities loaded yet
                     VideoFormatPicker(selection: $viewModel.selectedVideoFormat)
                 }
 
                 Spacer()
+
+                // Prefetch indicator (shows video info as it loads)
+                if viewModel.isPrefetching || viewModel.prefetchedTitle != nil {
+                    HStack(spacing: 6) {
+                        if viewModel.isPrefetching {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                            Text(viewModel.prefetchStatusMessage.isEmpty ? "Laden..." : viewModel.prefetchStatusMessage)
+                                .font(.system(size: 12, weight: .medium))
+                                .animation(.easeInOut, value: viewModel.prefetchStatusMessage)
+                        } else if let title = viewModel.prefetchedTitle {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 12))
+                            Text(title)
+                                .font(.system(size: 12, weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(viewModel.isPrefetching
+                                ? Color.blue.opacity(0.15)
+                                : Color.green.opacity(0.15))
+                    )
+                    .foregroundStyle(viewModel.isPrefetching ? .blue : .green)
+                    .frame(maxWidth: 300)
+                    .animation(.spring(response: 0.3), value: viewModel.prefetchStatusMessage)
+                }
 
                 // Playlist indicator (shows when playlist detected)
                 if viewModel.isPlaylistDetected || viewModel.isFetchingPlaylist {
@@ -569,8 +650,7 @@ struct VideoFormatPicker: View {
                 } label: {
                     Text(format.displayName)
                         .font(.system(size: 11, weight: .semibold))
-                        .frame(minWidth: 50)
-                        .padding(.horizontal, 12)
+                        .padding(.horizontal, 10)
                         .padding(.vertical, 8)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
@@ -587,7 +667,7 @@ struct VideoFormatPicker: View {
         .padding(4)
         .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Video format")
+        .accessibilityLabel("Video quality")
     }
 }
 
@@ -623,6 +703,45 @@ struct AudioFormatPicker: View {
         .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Audio format")
+    }
+}
+
+struct DynamicQualityPicker: View {
+    let qualities: [AvailableQuality]
+    @Binding var selection: AvailableQuality?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(qualities) { quality in
+                    Button {
+                        withAnimation(.spring(response: 0.2)) {
+                            selection = quality
+                        }
+                    } label: {
+                        Text(quality.label)
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(selection == quality ? Color.accentColor.opacity(0.2) : Color.clear)
+                            )
+                            .foregroundStyle(selection == quality ? .primary : .secondary)
+                            .contentShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(quality.label)
+                    .accessibilityAddTraits(selection == quality ? .isSelected : [])
+                }
+            }
+            .padding(4)
+        }
+        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Video quality")
     }
 }
 
@@ -714,7 +833,7 @@ struct DownloadRowView: View {
             if item.status.canPause {
                 Button(action: onPause) {
                     Image(systemName: "pause.circle.fill")
-                        .font(.system(size: 22))
+                        .font(.system(size: 28))
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.orange)
                 }
@@ -724,7 +843,7 @@ struct DownloadRowView: View {
             } else if item.status.canRetry {
                 Button(action: item.status.isPaused ? onResume : onRetry) {
                     Image(systemName: item.status.isPaused ? "play.circle.fill" : "arrow.clockwise.circle.fill")
-                        .font(.system(size: 22))
+                        .font(.system(size: 28))
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(item.status.isPaused ? .green : .blue)
                 }
@@ -737,7 +856,7 @@ struct DownloadRowView: View {
             if item.status.isActive {
                 Button(action: onCancel) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 22))
+                        .font(.system(size: 28))
                         .symbolRenderingMode(.hierarchical)
                         .foregroundStyle(.red)
                 }
@@ -749,7 +868,7 @@ struct DownloadRowView: View {
             // Remove button
             Button(action: onRemove) {
                 Image(systemName: "trash.circle.fill")
-                    .font(.system(size: 22))
+                    .font(.system(size: 28))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.secondary)
             }
@@ -854,6 +973,9 @@ struct DownloadRowView: View {
             case .pending:
                 Image(systemName: "clock.fill")
                     .foregroundStyle(.secondary)
+            case .preparing:
+                ProgressView()
+                    .scaleEffect(0.5)
             case .downloading:
                 Image(systemName: "arrow.down.circle.fill")
                     .foregroundStyle(.blue)
@@ -879,6 +1001,7 @@ struct DownloadRowView: View {
     private var statusColor: Color {
         switch item.status {
         case .fetchingInfo, .pending: return .secondary
+        case .preparing: return .blue
         case .downloading: return .blue
         case .paused: return .orange
         case .converting: return .orange

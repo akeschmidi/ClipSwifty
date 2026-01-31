@@ -9,6 +9,7 @@ final class DownloadViewModel: ObservableObject {
     @Published var urlInput: String = "" {
         didSet {
             updatePlaylistDetection()
+            prefetchVideoInfo()
         }
     }
     @Published var selectedVideoFormat: VideoFormat = .best
@@ -19,6 +20,33 @@ final class DownloadViewModel: ObservableObject {
     @Published var showPlaylistDialog: Bool = false
     @Published var playlistInfo: PlaylistInfo?
     @Published var isFetchingPlaylist: Bool = false
+    @Published var isPrefetching: Bool = false
+    @Published var prefetchedTitle: String?
+    @Published var prefetchStatusMessage: String = ""
+    @Published var availableQualities: [AvailableQuality] = []
+    @Published var selectedQuality: AvailableQuality?
+
+    private var statusMessageTask: Task<Void, Never>?
+    private let funnyLoadingMessages = [
+        "🔍 Schnüffle am Video...",
+        "🎬 Frage YouTube höflich...",
+        "📡 Verbinde mit dem Internet-Dings...",
+        "🧙‍♂️ Zaubere Metadaten herbei...",
+        "🎯 Suche die beste Qualität...",
+        "🍿 Bereite Popcorn vor...",
+        "🔮 Lese die Kristallkugel...",
+        "🎪 Jongliere mit Bytes...",
+        "🚀 Lade Raketentreibstoff...",
+        "🐢 Warte auf die Schildkröte...",
+        "☕ Koche erstmal Kaffee...",
+        "🎸 Stimme die Gitarre...",
+        "🌈 Male einen Regenbogen...",
+        "🎲 Würfle die Formate...",
+        "🔧 Schraube am Decoder...",
+        "📺 Putze den Bildschirm...",
+        "🎭 Probe die Vorstellung...",
+        "🌟 Sammle Sternstaub..."
+    ]
 
     struct PlaylistInfo {
         let url: String
@@ -34,6 +62,11 @@ final class DownloadViewModel: ObservableObject {
     private let ytDlpManager = YtDlpManager.shared
     private var saveTask: Task<Void, Never>?
     private var lastSaveTime: Date = .distantPast
+
+    // Prefetch cache for video info
+    private var prefetchCache: [String: VideoInfo] = [:]
+    private var prefetchTask: Task<Void, Never>?
+    private var lastPrefetchURL: String = ""
 
     // Throttled save - only save every 2 seconds max during downloads
     private func scheduleSave(immediate: Bool = false) {
@@ -119,18 +152,138 @@ final class DownloadViewModel: ObservableObject {
         }
     }
 
+    /// Prefetch video info in the background as user types/pastes URL
+    private func prefetchVideoInfo() {
+        let url = urlInput.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Clear indicator if URL is empty or invalid
+        if url.isEmpty || isPlaylistDetected || !isValidVideoURL(url) {
+            prefetchTask?.cancel()
+            prefetchTask = nil
+            isPrefetching = false
+            prefetchedTitle = nil
+            availableQualities = []
+            selectedQuality = nil
+            lastPrefetchURL = ""
+            return
+        }
+
+        // Don't prefetch same URL
+        guard url != lastPrefetchURL else { return }
+
+        // Cancel any existing prefetch
+        prefetchTask?.cancel()
+        lastPrefetchURL = url
+        prefetchedTitle = nil
+        availableQualities = []
+        selectedQuality = nil
+
+        // Check cache first
+        if let cached = prefetchCache[url] {
+            prefetchedTitle = cached.title
+            availableQualities = cached.availableQualities
+            if let first = availableQualities.first {
+                selectedQuality = first  // Default to best quality
+            }
+            logger.info("⏱️ [PREFETCH] Cache hit for: \(url)")
+            return
+        }
+
+        // Start prefetch with small delay (debounce for typing)
+        prefetchTask = Task {
+            // Wait a bit in case user is still typing
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s debounce
+            guard !Task.isCancelled else { return }
+
+            isPrefetching = true
+            startFunnyStatusMessages()
+            logger.info("⏱️ [PREFETCH] Starting prefetch for: \(url)")
+            let startTime = Date()
+
+            do {
+                // Use full info fetch to get available formats
+                let info = try await ytDlpManager.fetchVideoInfo(url: url)
+                guard !Task.isCancelled else {
+                    stopFunnyStatusMessages()
+                    return
+                }
+
+                // Cache the result
+                prefetchCache[url] = info
+                prefetchedTitle = info.title
+                availableQualities = info.availableQualities
+                if let first = availableQualities.first {
+                    selectedQuality = first  // Default to best quality
+                }
+
+                let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
+                let qualityCount = self.availableQualities.count
+                logger.info("⏱️ [PREFETCH] Completed in \(elapsed)ms: \(info.title ?? "unknown"), \(qualityCount) qualities")
+            } catch {
+                guard !Task.isCancelled else {
+                    stopFunnyStatusMessages()
+                    return
+                }
+                logger.warning("⏱️ [PREFETCH] Failed: \(error.localizedDescription)")
+            }
+
+            stopFunnyStatusMessages()
+            isPrefetching = false
+        }
+    }
+
+    private func startFunnyStatusMessages() {
+        prefetchStatusMessage = funnyLoadingMessages.randomElement() ?? "Laden..."
+        statusMessageTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // Change every 2 seconds
+                guard !Task.isCancelled else { break }
+                prefetchStatusMessage = funnyLoadingMessages.randomElement() ?? "Laden..."
+            }
+        }
+    }
+
+    private func stopFunnyStatusMessages() {
+        statusMessageTask?.cancel()
+        statusMessageTask = nil
+        prefetchStatusMessage = ""
+    }
+
+    private func isValidVideoURL(_ url: String) -> Bool {
+        let patterns = [
+            "youtube.com/watch",
+            "youtu.be/",
+            "vimeo.com/",
+            "dailymotion.com/",
+            "twitch.tv/",
+            "twitter.com/",
+            "x.com/",
+            "tiktok.com/",
+            "instagram.com/",
+            "facebook.com/"
+        ]
+        let lowercased = url.lowercased()
+        return patterns.contains { lowercased.contains($0) }
+    }
+
     // MARK: - Public Actions
 
     func startDownload() {
+        let startTime = Date()
+        logger.info("⏱️ [START] startDownload triggered")
+
         guard !urlInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             errorMessage = "Please enter a URL"
             return
         }
 
         let url = urlInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isPlaylist = isPlaylistDetected
+        logger.info("⏱️ [INFO] URL: \(url), isPlaylistDetected: \(isPlaylist)")
 
         // If playlist detected, always show dialog to let user choose
         if isPlaylistDetected {
+            logger.info("⏱️ [INFO] Starting playlist fetch...")
             Task {
                 await fetchPlaylistInfo(url: url)
             }
@@ -141,23 +294,53 @@ final class DownloadViewModel: ObservableObject {
         // Single video download - start immediately with downloading status
         // Generate thumbnail URL immediately (no network request needed for YouTube)
         let thumbnailURL = extractThumbnailURL(from: url)
+        logger.info("⏱️ [TIMING] thumbnailURL generated in \(Int(Date().timeIntervalSince(startTime) * 1000))ms")
+
+        // Use prefetched info if available
+        let cachedInfo = prefetchCache[url]
+        let prefetchedVideoTitle = cachedInfo?.title
+        let prefetchedThumbnail = cachedInfo?.thumbnail.flatMap { URL(string: $0) }
+        let prefetchedDuration = cachedInfo?.formattedDuration
+        let prefetchedUploader = cachedInfo?.uploader
+
+        // Use selected quality or fall back to best
+        let qualityLabel = selectedQuality?.label ?? "best"
+        let formatSelector = selectedQuality?.formatSelector ?? "bestvideo+bestaudio/best"
+
+        if cachedInfo != nil {
+            logger.info("⏱️ [PREFETCH] Using cached info for download: \(prefetchedVideoTitle ?? "unknown"), quality: \(qualityLabel)")
+        }
 
         let item = DownloadItem(
             url: url,
-            thumbnailURL: thumbnailURL,
+            title: prefetchedVideoTitle,
+            thumbnailURL: prefetchedThumbnail ?? thumbnailURL,
+            duration: prefetchedDuration,
+            uploader: prefetchedUploader,
             status: .downloading(progress: 0),
             isAudioOnly: isAudioOnly,
-            videoFormat: selectedVideoFormat.rawValue,
+            videoFormat: formatSelector,
             audioFormat: selectedAudioFormat.rawValue,
             isPlaylist: false
         )
         downloads.insert(item, at: 0)
         scheduleSave(immediate: true)
 
+        // Cancel prefetch and clear indicator immediately
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        isPrefetching = false
+        prefetchedTitle = nil
+        availableQualities = []
+        selectedQuality = nil
+        prefetchCache.removeValue(forKey: url)
+
+        logger.info("⏱️ [INFO] Item added to downloads, starting processDownload task...")
         Task {
             await processDownload(itemId: item.id, url: url)
         }
 
+        logger.info("⏱️ [TIMING] startDownload setup completed in \(Int(Date().timeIntervalSince(startTime) * 1000))ms")
         urlInput = ""
         downloadFullPlaylist = false
     }
@@ -482,32 +665,34 @@ final class DownloadViewModel: ObservableObject {
     // MARK: - Private Methods
 
     private func processDownload(itemId: UUID, url: String) async {
-        guard let idx = downloads.firstIndex(where: { $0.id == itemId }) else { return }
+        let startTime = Date()
+        logger.info("⏱️ [START] processDownload for \(itemId)")
+
+        guard let idx = downloads.firstIndex(where: { $0.id == itemId }) else {
+            logger.warning("⏱️ [ABORT] Item not found: \(itemId)")
+            return
+        }
 
         do {
+            let setupStart = Date()
             try await ytDlpManager.setup()
+            logger.info("⏱️ [TIMING] setup took \(Int(Date().timeIntervalSince(setupStart) * 1000))ms")
 
-            let item = downloads[idx]
-
-            // Only fetch info if we don't have title yet
-            let needsInfo = item.title == nil
-
-            if needsInfo {
-                // Generate thumbnail immediately (no network request)
-                if item.thumbnailURL == nil, let thumbURL = extractThumbnailURL(from: url) {
-                    downloads[idx].thumbnailURL = thumbURL
-                }
-
-                // Start download and info fetch in PARALLEL
-                async let infoTask: () = fetchAndUpdateInfo(itemId: itemId, url: url)
-                async let downloadTask: () = performDownload(itemId: itemId, url: url, item: downloads[idx])
-                _ = await (infoTask, downloadTask)
-            } else {
-                // Already have info - just download
-                await performDownload(itemId: itemId, url: url, item: item)
+            // Generate thumbnail immediately if not present (no network request)
+            if downloads[idx].thumbnailURL == nil, let thumbURL = extractThumbnailURL(from: url) {
+                downloads[idx].thumbnailURL = thumbURL
+                logger.info("⏱️ [TIMING] thumbnail URL generated locally")
             }
 
+            // SKIP separate info fetch - we get title from yt-dlp output during download
+            // This saves ~25-30 seconds!
+            logger.info("⏱️ [START] download (title will be extracted from output)")
+            await performDownload(itemId: itemId, url: url, item: downloads[idx])
+
+            logger.info("⏱️ [DONE] processDownload took \(Int(Date().timeIntervalSince(startTime) * 1000))ms total")
+
         } catch {
+            logger.error("⏱️ [ERROR] processDownload failed after \(Int(Date().timeIntervalSince(startTime) * 1000))ms: \(error.localizedDescription)")
             guard let idx = downloads.firstIndex(where: { $0.id == itemId }) else { return }
             downloads[idx].status = .failed(message: error.localizedDescription)
             scheduleSave(immediate: true)
@@ -515,44 +700,121 @@ final class DownloadViewModel: ObservableObject {
     }
 
     private func fetchAndUpdateInfo(itemId: UUID, url: String) async {
+        let startTime = Date()
+        logger.info("⏱️ [START] fetchAndUpdateInfo for \(itemId)")
+
         do {
             let videoInfo = try await ytDlpManager.fetchVideoInfoFast(url: url)
+            logger.info("⏱️ [TIMING] fetchVideoInfoFast took \(Int(Date().timeIntervalSince(startTime) * 1000))ms")
+
             guard let idx = downloads.firstIndex(where: { $0.id == itemId }) else { return }
             downloads[idx].updateWithVideoInfo(videoInfo)
             scheduleSave()
+
+            logger.info("⏱️ [DONE] fetchAndUpdateInfo completed in \(Int(Date().timeIntervalSince(startTime) * 1000))ms - title: \(videoInfo.title ?? "nil")")
         } catch {
-            // Info fetch failed - not critical, download continues
-            logger.warning("Info fetch failed for \(itemId): \(error.localizedDescription)")
+            logger.warning("⏱️ [ERROR] fetchAndUpdateInfo failed after \(Int(Date().timeIntervalSince(startTime) * 1000))ms: \(error.localizedDescription)")
         }
     }
 
     private func performDownload(itemId: UUID, url: String, item: DownloadItem) async {
-        guard let index = downloads.firstIndex(where: { $0.id == itemId }) else { return }
+        let startTime = Date()
+        logger.info("⏱️ [START] performDownload for \(itemId)")
 
-        downloads[index].status = .downloading(progress: 0)
+        guard let index = downloads.firstIndex(where: { $0.id == itemId }) else {
+            logger.warning("⏱️ [ABORT] performDownload - item not found")
+            return
+        }
 
+        downloads[index].status = .preparing(status: "Connecting...")
+
+        let buildArgsStart = Date()
         var arguments = buildArguments(for: url, item: item)
         // Add continue flag for resume support
         arguments += ["--continue", "-o", outputDirectory.appendingPathComponent("%(title)s.%(ext)s").path]
+        logger.info("⏱️ [TIMING] buildArguments took \(Int(Date().timeIntervalSince(buildArgsStart) * 1000))ms")
+        logger.info("⏱️ [DEBUG] yt-dlp arguments: \(arguments.joined(separator: " "))")
+
+        let ytdlpStart = Date()
+        var firstProgressTime: Date?
+        var extractedTitle: String?
 
         do {
-            let output = try await ytDlpManager.runWithProgress(id: itemId, arguments: arguments) { [weak self] progress in
-                Task { @MainActor in
-                    guard let self = self,
-                          let idx = self.downloads.firstIndex(where: { $0.id == itemId }) else { return }
+            let output = try await ytDlpManager.runWithProgressAndOutput(id: itemId, arguments: arguments) { [weak self] progress, outputLine in
+                // Handle output line (for title extraction and status updates)
+                if let line = outputLine {
+                    // Update preparation status based on yt-dlp output
+                    Task { @MainActor in
+                        guard let self = self,
+                              let idx = self.downloads.firstIndex(where: { $0.id == itemId }) else { return }
 
-                    // Get current progress to prevent jumping backwards (video+audio have multiple phases)
-                    let currentProgress: Double
-                    if case .downloading(let p) = self.downloads[idx].status {
-                        currentProgress = p
-                    } else {
-                        currentProgress = 0
+                        // Only update if still in preparing state
+                        if case .preparing = self.downloads[idx].status {
+                            if line.contains("[youtube]") && line.contains("Extracting") {
+                                self.downloads[idx].status = .preparing(status: "Extracting video info...")
+                            } else if line.contains("[info]") {
+                                self.downloads[idx].status = .preparing(status: "Getting formats...")
+                            } else if line.contains("[download] Destination") {
+                                self.downloads[idx].status = .preparing(status: "Starting download...")
+                            }
+                        }
                     }
 
-                    // Only update if progress increased
-                    if progress > currentProgress {
-                        self.downloads[idx].status = .downloading(progress: progress)
-                        self.scheduleSave() // Throttled save during progress
+                    // Extract title from yt-dlp output (e.g., "[download] Destination: /path/Title.mp4")
+                    if extractedTitle == nil {
+                        if line.contains("[download] Destination:") || line.contains("[Merger]") || line.contains("Merging formats") {
+                            // Extract filename from path
+                            if let lastSlash = line.lastIndex(of: "/") {
+                                let filename = String(line[line.index(after: lastSlash)...])
+                                // Remove extension and clean up
+                                if let dotIndex = filename.lastIndex(of: ".") {
+                                    let title = String(filename[..<dotIndex])
+                                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                                        .replacingOccurrences(of: "\"", with: "")
+                                    if !title.isEmpty {
+                                        extractedTitle = title
+                                        Task { @MainActor in
+                                            guard let self = self,
+                                                  let idx = self.downloads.firstIndex(where: { $0.id == itemId }),
+                                                  self.downloads[idx].title == nil else { return }
+                                            self.downloads[idx].title = title
+                                            logger.info("⏱️ [INFO] Extracted title: \(title)")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return  // Output line only, no progress update
+                }
+
+                // Handle progress update
+                if progress >= 0 {
+                    if firstProgressTime == nil {
+                        firstProgressTime = Date()
+                        let elapsed = Int(Date().timeIntervalSince(ytdlpStart) * 1000)
+                        Task { @MainActor in
+                            logger.info("⏱️ [TIMING] first progress received after \(elapsed)ms")
+                        }
+                    }
+
+                    Task { @MainActor in
+                        guard let self = self,
+                              let idx = self.downloads.firstIndex(where: { $0.id == itemId }) else { return }
+
+                        // Get current progress to prevent jumping backwards (video+audio have multiple phases)
+                        let currentProgress: Double
+                        if case .downloading(let p) = self.downloads[idx].status {
+                            currentProgress = p
+                        } else {
+                            currentProgress = 0
+                        }
+
+                        // Only update if progress increased
+                        if progress > currentProgress {
+                            self.downloads[idx].status = .downloading(progress: progress)
+                            self.scheduleSave() // Throttled save during progress
+                        }
                     }
                 }
             }
@@ -573,9 +835,10 @@ final class DownloadViewModel: ObservableObject {
                     let expectedFile = findDownloadedFile(title: title)
                     downloads[idx].outputPath = expectedFile
                 }
-                logger.info("Download completed: \(itemId)")
+                logger.info("⏱️ [DONE] Download completed in \(Int(Date().timeIntervalSince(startTime) * 1000))ms: \(itemId)")
             } else {
                 let errorMsg = output.stderr.isEmpty ? "Unknown error" : String(output.stderr.prefix(200))
+                logger.error("⏱️ [ERROR] Download failed after \(Int(Date().timeIntervalSince(startTime) * 1000))ms: \(errorMsg)")
                 downloads[idx].status = .failed(message: errorMsg)
             }
             scheduleSave(immediate: true) // Immediate save on completion/failure
@@ -632,14 +895,18 @@ final class DownloadViewModel: ObservableObject {
                 args += AudioFormat.mp3.ytDlpArguments
             }
         } else {
-            if let format = VideoFormat(rawValue: item.videoFormat) {
+            // Check if videoFormat is a custom format selector (contains yt-dlp syntax)
+            if item.videoFormat.contains("[") || item.videoFormat.contains("+") {
+                // Custom format selector from quality picker
+                args += ["-f", item.videoFormat, "--merge-output-format", "mp4"]
+            } else if let format = VideoFormat(rawValue: item.videoFormat) {
                 args += format.ytDlpArguments
             } else {
                 args += VideoFormat.best.ytDlpArguments
             }
         }
 
-        // Performance optimizations
+        // Performance optimizations - speed up extraction and download
         let fragments = AppSettings.shared.concurrentFragments
         args += [
             "--concurrent-fragments", "\(fragments)", // Download fragments in parallel
@@ -648,6 +915,10 @@ final class DownloadViewModel: ObservableObject {
             "--retries", "3",                         // Quick retries
             "--fragment-retries", "3",
             "--no-check-certificates",                // Skip cert validation (faster)
+            "--no-warnings",                          // Skip warnings
+            "--no-check-formats",                     // Don't verify format URLs (faster)
+            "--extractor-retries", "1",               // Fewer extractor retries
+            "--socket-timeout", "10",                 // Shorter socket timeout
         ]
 
         // Add rate limit if configured

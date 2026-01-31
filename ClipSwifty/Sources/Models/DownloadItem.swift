@@ -3,6 +3,7 @@ import Foundation
 enum DownloadStatus: Equatable, Codable {
     case fetchingInfo
     case pending
+    case preparing(status: String)  // New: shows what yt-dlp is doing
     case downloading(progress: Double)
     case paused(progress: Double)
     case converting
@@ -15,7 +16,12 @@ enum DownloadStatus: Equatable, Codable {
             return "Fetching info..."
         case .pending:
             return "Waiting..."
+        case .preparing(let status):
+            return status
         case .downloading(let progress):
+            if progress < 0.01 {
+                return "Starting download..."
+            }
             return "Downloading \(Int(progress * 100))%"
         case .paused(let progress):
             return "Paused at \(Int(progress * 100))%"
@@ -30,7 +36,7 @@ enum DownloadStatus: Equatable, Codable {
 
     var isActive: Bool {
         switch self {
-        case .fetchingInfo, .downloading, .converting:
+        case .fetchingInfo, .preparing, .downloading, .converting:
             return true
         default:
             return false

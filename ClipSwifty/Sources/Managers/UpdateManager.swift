@@ -30,9 +30,8 @@ final class UpdateManager: ObservableObject {
     private var lastBackgroundCheck: Date?
 
     private init() {
-        Task {
-            currentVersion = await ytDlpManager.getVersion()
-        }
+        // Load cached version from UserDefaults - don't call yt-dlp on startup!
+        currentVersion = UserDefaults.standard.string(forKey: "cachedYtDlpVersion")
     }
 
     /// Silent background check for updates - no UI shown unless update available
@@ -53,7 +52,7 @@ final class UpdateManager: ObservableObject {
         logger.info("Performing background update check...")
 
         do {
-            // Fetch latest release from GitHub
+            // Fetch latest release from GitHub API only - NO yt-dlp call!
             guard let latest = try await fetchLatestRelease() else {
                 logger.warning("Could not fetch latest release")
                 return
@@ -62,19 +61,15 @@ final class UpdateManager: ObservableObject {
             latestVersion = latest.tagName
             lastBackgroundCheck = Date()
 
-            // Get current installed version
-            var current = currentVersion
-            if current == nil {
-                current = await ytDlpManager.getVersion()
-                currentVersion = current
-            }
+            // Use cached version or assume we have the bundled version
+            let current = currentVersion ?? "2026.01.29"  // Bundled version
 
             // Compare versions
-            if let current = current, isNewerVersion(latest.tagName, than: current) {
+            if isNewerVersion(latest.tagName, than: current) {
                 logger.info("Update available: \(current) -> \(latest.tagName)")
                 updateAvailable = true
             } else {
-                logger.info("yt-dlp is up to date: \(current ?? "unknown")")
+                logger.info("yt-dlp is up to date: \(current)")
                 updateAvailable = false
             }
 
@@ -132,6 +127,10 @@ final class UpdateManager: ObservableObject {
             if success {
                 let newVersion = await ytDlpManager.getVersion()
                 currentVersion = newVersion
+                // Cache the version
+                if let version = newVersion {
+                    UserDefaults.standard.set(version, forKey: "cachedYtDlpVersion")
+                }
 
                 if oldVersion != newVersion {
                     logger.info("yt-dlp updated: \(oldVersion ?? "unknown") -> \(newVersion ?? "unknown")")
@@ -148,7 +147,12 @@ final class UpdateManager: ObservableObject {
                 updateMessage = "Trying alternative update..."
 
                 try await ytDlpManager.forceUpdate()
-                currentVersion = await ytDlpManager.getVersion()
+                let newVersion = await ytDlpManager.getVersion()
+                currentVersion = newVersion
+                // Cache the version
+                if let version = newVersion {
+                    UserDefaults.standard.set(version, forKey: "cachedYtDlpVersion")
+                }
                 settings.lastYtDlpUpdate = Date()
                 updateMessage = "Update complete"
                 updateAvailable = false

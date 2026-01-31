@@ -123,7 +123,9 @@ final class YtDlpManager: YtDlpManagerProtocol {
 
     /// Fast info fetch - only gets title and thumbnail, much faster
     func fetchVideoInfoFast(url: String) async throws -> VideoInfo {
-        logger.info("Fast fetching video info for: \(url)")
+        let startTime = Date()
+        logger.info("⏱️ [START] fetchVideoInfoFast for: \(url)")
+
         // Use --print to get only what we need - much faster
         let output = try await run(arguments: [
             "--no-playlist",
@@ -134,6 +136,8 @@ final class YtDlpManager: YtDlpManagerProtocol {
             "--print", "%(title)s|||%(thumbnail)s|||%(duration)s|||%(uploader)s",
             url
         ])
+
+        logger.info("⏱️ [TIMING] yt-dlp --print took \(Int(Date().timeIntervalSince(startTime) * 1000))ms")
 
         guard output.exitCode == 0 else {
             logger.error("yt-dlp failed: \(output.stderr)")
@@ -168,21 +172,37 @@ final class YtDlpManager: YtDlpManagerProtocol {
     }
 
     func run(arguments: [String]) async throws -> ProcessOutput {
+        let startTime = Date()
+        logger.info("⏱️ [START] yt-dlp run: \(arguments.first ?? "?")")
+
         guard let ytDlpURL = Resources.bundledYtDlpURL,
               fileManager.fileExists(atPath: ytDlpURL.path) else {
             throw YtDlpError.binaryNotFound
         }
 
-        return try await executeProcess(at: ytDlpURL, arguments: arguments)
+        let result = try await executeProcess(at: ytDlpURL, arguments: arguments)
+        logger.info("⏱️ [DONE] yt-dlp run took \(Int(Date().timeIntervalSince(startTime) * 1000))ms (exit: \(result.exitCode))")
+        return result
     }
 
     func runWithProgress(id: UUID, arguments: [String], onProgress: @escaping (Double) -> Void) async throws -> ProcessOutput {
+        return try await runWithProgressAndOutput(id: id, arguments: arguments) { progress, _ in
+            onProgress(progress)
+        }
+    }
+
+    func runWithProgressAndOutput(id: UUID, arguments: [String], onProgress: @escaping (Double, String?) -> Void) async throws -> ProcessOutput {
+        let startTime = Date()
+        logger.info("⏱️ [START] yt-dlp runWithProgress: \(id)")
+
         guard let ytDlpURL = Resources.bundledYtDlpURL,
               fileManager.fileExists(atPath: ytDlpURL.path) else {
             throw YtDlpError.binaryNotFound
         }
 
-        return try await executeProcessWithProgress(id: id, at: ytDlpURL, arguments: arguments, onProgress: onProgress)
+        let result = try await executeProcessWithProgressAndOutput(id: id, at: ytDlpURL, arguments: arguments, onProgress: onProgress)
+        logger.info("⏱️ [DONE] yt-dlp runWithProgress took \(Int(Date().timeIntervalSince(startTime) * 1000))ms (exit: \(result.exitCode))")
+        return result
     }
 
     // Legacy method without ID for backwards compatibility
@@ -343,6 +363,17 @@ final class YtDlpManager: YtDlpManagerProtocol {
         arguments: [String],
         onProgress: @escaping (Double) -> Void
     ) async throws -> ProcessOutput {
+        return try await executeProcessWithProgressAndOutput(id: id, at: url, arguments: arguments) { progress, _ in
+            onProgress(progress)
+        }
+    }
+
+    private func executeProcessWithProgressAndOutput(
+        id: UUID,
+        at url: URL,
+        arguments: [String],
+        onProgress: @escaping (Double, String?) -> Void
+    ) async throws -> ProcessOutput {
         try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             let stdoutPipe = Pipe()
@@ -368,14 +399,14 @@ final class YtDlpManager: YtDlpManagerProtocol {
                 let data = handle.availableData
                 guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
                 stdoutContent += text
-                self?.parseProgress(from: text, callback: onProgress)
+                self?.parseProgressAndOutput(from: text, callback: onProgress)
             }
 
             stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
                 guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
                 stderrContent += text
-                self?.parseProgress(from: text, callback: onProgress)
+                self?.parseProgressAndOutput(from: text, callback: onProgress)
             }
 
             process.terminationHandler = { [weak self] proc in
@@ -420,6 +451,13 @@ final class YtDlpManager: YtDlpManagerProtocol {
     }
 
     private func parseProgress(from text: String, callback: @escaping (Double) -> Void) {
+        parseProgressAndOutput(from: text) { progress, _ in
+            callback(progress)
+        }
+    }
+
+    private func parseProgressAndOutput(from text: String, callback: @escaping (Double, String?) -> Void) {
+        // Parse progress percentage
         let range = NSRange(text.startIndex..., in: text)
         let matches = progressRegex.matches(in: text, options: [], range: range)
 
@@ -427,8 +465,16 @@ final class YtDlpManager: YtDlpManagerProtocol {
             if let percentRange = Range(match.range(at: 1), in: text),
                let percent = Double(text[percentRange]) {
                 DispatchQueue.main.async {
-                    callback(percent / 100.0)
+                    callback(percent / 100.0, nil)
                 }
+            }
+        }
+
+        // Also pass output lines for title extraction
+        let lines = text.components(separatedBy: .newlines)
+        for line in lines where !line.isEmpty {
+            DispatchQueue.main.async {
+                callback(-1, line)  // -1 means no progress update, just output line
             }
         }
     }
