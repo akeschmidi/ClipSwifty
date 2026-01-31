@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import os.log
+import UserNotifications
 
 private let logger = Logger(subsystem: "com.clipswifty", category: "DownloadViewModel")
 
@@ -25,6 +26,20 @@ final class DownloadViewModel: ObservableObject {
     @Published var prefetchStatusMessage: String = ""
     @Published var availableQualities: [AvailableQuality] = []
     @Published var selectedQuality: AvailableQuality?
+
+    // Clipboard monitoring
+    @Published var clipboardDetectedURL: String?
+    @Published var showClipboardPopup: Bool = false
+    private var clipboardMonitorTask: Task<Void, Never>?
+    private var lastClipboardContent: String = ""
+    private var lastClipboardChangeCount: Int = 0
+
+    // Format preset
+    @Published var selectedPreset: FormatPreset = .custom {
+        didSet {
+            applyPreset(selectedPreset)
+        }
+    }
 
     private var statusMessageTask: Task<Void, Never>?
     private let funnyLoadingMessages = [
@@ -59,7 +74,13 @@ final class DownloadViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var outputDirectory: URL
 
+    /// Number of currently active downloads
+    var activeDownloadCount: Int {
+        downloads.filter { $0.status.isActive }.count
+    }
+
     private let ytDlpManager = YtDlpManager.shared
+    private let notificationCenter = UNUserNotificationCenter.current()
     private var saveTask: Task<Void, Never>?
     private var lastSaveTime: Date = .distantPast
 
@@ -94,7 +115,119 @@ final class DownloadViewModel: ObservableObject {
 
     init() {
         self.outputDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+        self.selectedPreset = AppSettings.shared.selectedPreset
         loadDownloads()
+        requestNotificationPermission()
+        startClipboardMonitoring()
+    }
+
+    deinit {
+        clipboardMonitorTask?.cancel()
+    }
+
+    // MARK: - Format Presets
+
+    private func applyPreset(_ preset: FormatPreset) {
+        guard preset != .custom else { return }
+        isAudioOnly = preset.isAudioOnly
+        if !preset.isAudioOnly {
+            if let format = VideoFormat(rawValue: preset.videoFormat) {
+                selectedVideoFormat = format
+            }
+        } else {
+            if let format = AudioFormat(rawValue: preset.audioFormat) {
+                selectedAudioFormat = format
+            }
+        }
+        AppSettings.shared.selectedPreset = preset
+    }
+
+    // MARK: - Clipboard Monitoring
+
+    private func startClipboardMonitoring() {
+        lastClipboardChangeCount = NSPasteboard.general.changeCount
+        clipboardMonitorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000) // Check every 0.5s
+                guard !Task.isCancelled else { break }
+                await self?.checkClipboard()
+            }
+        }
+    }
+
+    @MainActor
+    private func checkClipboard() {
+        guard AppSettings.shared.clipboardMonitoring else { return }
+
+        let pasteboard = NSPasteboard.general
+        let currentChangeCount = pasteboard.changeCount
+
+        // Only check if clipboard changed
+        guard currentChangeCount != lastClipboardChangeCount else { return }
+        lastClipboardChangeCount = currentChangeCount
+
+        guard let content = pasteboard.string(forType: .string) else { return }
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Don't show popup for same URL
+        guard trimmed != lastClipboardContent else { return }
+
+        // Check if it's a video URL
+        if isValidVideoURL(trimmed) {
+            lastClipboardContent = trimmed
+            clipboardDetectedURL = trimmed
+            showClipboardPopup = true
+
+            // Auto-hide after 5 seconds
+            Task {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                if self.clipboardDetectedURL == trimmed {
+                    self.showClipboardPopup = false
+                }
+            }
+        }
+    }
+
+    func downloadFromClipboard() {
+        guard let url = clipboardDetectedURL else { return }
+        urlInput = url
+        showClipboardPopup = false
+        startDownload()
+    }
+
+    func dismissClipboardPopup() {
+        showClipboardPopup = false
+    }
+
+    // MARK: - Notifications
+
+    private func requestNotificationPermission() {
+        notificationCenter.requestAuthorization(options: [.alert, .sound]) { granted, error in
+            if let error = error {
+                logger.error("Notification permission error: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func sendDownloadCompleteNotification(title: String) {
+        guard AppSettings.shared.notificationsEnabled else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Download abgeschlossen"
+        content.body = title
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil  // Deliver immediately
+        )
+
+        notificationCenter.add(request) { error in
+            if let error = error {
+                logger.error("Failed to send notification: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func loadDownloads() {
@@ -662,6 +795,59 @@ final class DownloadViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Queue Management
+
+    func moveItemUp(_ item: DownloadItem) {
+        guard let idx = downloads.firstIndex(where: { $0.id == item.id }),
+              idx > 0 else { return }
+        downloads.swapAt(idx, idx - 1)
+        scheduleSave(immediate: true)
+    }
+
+    func moveItemDown(_ item: DownloadItem) {
+        guard let idx = downloads.firstIndex(where: { $0.id == item.id }),
+              idx < downloads.count - 1 else { return }
+        downloads.swapAt(idx, idx + 1)
+        scheduleSave(immediate: true)
+    }
+
+    func moveItem(from source: IndexSet, to destination: Int) {
+        downloads.move(fromOffsets: source, toOffset: destination)
+        scheduleSave(immediate: true)
+    }
+
+    func pauseAll() {
+        for idx in downloads.indices {
+            if case .downloading(let progress) = downloads[idx].status {
+                ytDlpManager.cancelDownload(id: downloads[idx].id)
+                downloads[idx].status = .paused(progress: progress)
+            }
+        }
+        scheduleSave(immediate: true)
+    }
+
+    func resumeAll() {
+        let pausedItems = downloads.filter { item in
+            if case .paused = item.status { return true }
+            return false
+        }
+
+        for item in pausedItems {
+            resumeDownload(item)
+        }
+    }
+
+    var hasPausedDownloads: Bool {
+        downloads.contains { item in
+            if case .paused = item.status { return true }
+            return false
+        }
+    }
+
+    var hasActiveDownloads: Bool {
+        downloads.contains { $0.status.isActive }
+    }
+
     // MARK: - Private Methods
 
     private func processDownload(itemId: UUID, url: String) async {
@@ -730,8 +916,8 @@ final class DownloadViewModel: ObservableObject {
 
         let buildArgsStart = Date()
         var arguments = buildArguments(for: url, item: item)
-        // Add continue flag for resume support
-        arguments += ["--continue", "-o", outputDirectory.appendingPathComponent("%(title)s.%(ext)s").path]
+        // Add continue flag for resume support and output template
+        arguments += ["--continue", "-o", buildOutputTemplate()]
         logger.info("⏱️ [TIMING] buildArguments took \(Int(Date().timeIntervalSince(buildArgsStart) * 1000))ms")
         logger.info("⏱️ [DEBUG] yt-dlp arguments: \(arguments.joined(separator: " "))")
 
@@ -785,6 +971,48 @@ final class DownloadViewModel: ObservableObject {
                             }
                         }
                     }
+
+                    // Extract speed and ETA from download progress line
+                    // Format: "[download]  50.0% of 100.00MiB at 2.50MiB/s ETA 00:20"
+                    if line.contains("[download]") && line.contains("% of") {
+                        var extractedSpeed: String?
+                        var extractedEta: String?
+
+                        // Extract speed (e.g., "2.50MiB/s" or "500KiB/s")
+                        if let atIndex = line.range(of: " at ") {
+                            let afterAt = line[atIndex.upperBound...]
+                            if let speedEnd = afterAt.range(of: "/s") {
+                                let speedStr = String(afterAt[..<speedEnd.upperBound])
+                                    .trimmingCharacters(in: .whitespaces)
+                                extractedSpeed = speedStr
+                            }
+                        }
+
+                        // Extract ETA (e.g., "00:20" or "01:23:45")
+                        if let etaIndex = line.range(of: "ETA ") {
+                            let afterEta = line[etaIndex.upperBound...]
+                            let etaStr = String(afterEta)
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                                .components(separatedBy: " ").first ?? ""
+                            if !etaStr.isEmpty && etaStr != "Unknown" {
+                                extractedEta = etaStr
+                            }
+                        }
+
+                        if extractedSpeed != nil || extractedEta != nil {
+                            Task { @MainActor in
+                                guard let self = self,
+                                      let idx = self.downloads.firstIndex(where: { $0.id == itemId }) else { return }
+                                if let speed = extractedSpeed {
+                                    self.downloads[idx].downloadSpeed = speed
+                                }
+                                if let eta = extractedEta {
+                                    self.downloads[idx].eta = eta
+                                }
+                            }
+                        }
+                    }
+
                     return  // Output line only, no progress update
                 }
 
@@ -830,10 +1058,14 @@ final class DownloadViewModel: ObservableObject {
                 }
             } else if output.exitCode == 0 {
                 downloads[idx].status = .completed
+                downloads[idx].downloadSpeed = nil
+                downloads[idx].eta = nil
                 // Try to find the downloaded file
                 if let title = downloads[idx].title {
                     let expectedFile = findDownloadedFile(title: title)
                     downloads[idx].outputPath = expectedFile
+                    // Send notification
+                    sendDownloadCompleteNotification(title: title)
                 }
                 logger.info("⏱️ [DONE] Download completed in \(Int(Date().timeIntervalSince(startTime) * 1000))ms: \(itemId)")
             } else {
@@ -885,6 +1117,12 @@ final class DownloadViewModel: ObservableObject {
         }
     }
 
+    private func buildOutputTemplate() -> String {
+        let pattern = AppSettings.shared.organizationPattern
+        let basePath = outputDirectory.path
+        return "\(basePath)/\(pattern.folderTemplate)%(title)s.%(ext)s"
+    }
+
     private func buildArguments(for url: String, item: DownloadItem) -> [String] {
         var args: [String] = []
 
@@ -923,6 +1161,21 @@ final class DownloadViewModel: ObservableObject {
 
         // Add rate limit if configured
         args += AppSettings.shared.rateLimitArgument
+
+        // Embed chapters (only for video downloads)
+        if AppSettings.shared.embedChapters && !item.isAudioOnly {
+            args += ["--embed-chapters"]
+        }
+
+        // Save thumbnail
+        if AppSettings.shared.saveThumbnail {
+            args += ["--write-thumbnail", "--convert-thumbnails", "jpg"]
+        }
+
+        // Download subtitles
+        if AppSettings.shared.downloadSubtitles {
+            args += ["--write-subs", "--write-auto-subs", "--sub-langs", "all", "--convert-subs", "srt"]
+        }
 
         // Add newline for progress parsing
         args += ["--newline"]

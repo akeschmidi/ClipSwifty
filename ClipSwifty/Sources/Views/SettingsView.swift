@@ -6,6 +6,17 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            // Appearance
+            Section {
+                Picker("Erscheinungsbild:", selection: $settings.appearanceMode) {
+                    ForEach(AppearanceMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+            } header: {
+                Label("Darstellung", systemImage: "paintbrush")
+            }
+
             // Download Settings
             Section {
                 // Output Directory
@@ -73,8 +84,57 @@ struct SettingsView: View {
                         Text(format.displayName).tag(format.rawValue)
                     }
                 }
+
+                Toggle("Embed chapters in videos", isOn: $settings.embedChapters)
+
+                Toggle("Save thumbnail as image", isOn: $settings.saveThumbnail)
+
+                Toggle("Download subtitles", isOn: $settings.downloadSubtitles)
             } header: {
                 Label("Formats", systemImage: "film")
+            } footer: {
+                Text("Chapters are embedded in MP4 files when available. Subtitles are saved as .srt files.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Notifications & Clipboard
+            Section {
+                Toggle("Notify when download completes", isOn: $settings.notificationsEnabled)
+
+                Toggle("Clipboard monitoring", isOn: $settings.clipboardMonitoring)
+            } header: {
+                Label("Notifications", systemImage: "bell")
+            } footer: {
+                Text("Clipboard monitoring shows a popup when you copy a video URL.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Auto-Organization
+            Section {
+                Picker("Organize downloads:", selection: $settings.organizationPattern) {
+                    ForEach(OrganizationPattern.allCases) { pattern in
+                        Text(pattern.displayName).tag(pattern)
+                    }
+                }
+
+                if settings.organizationPattern != .none {
+                    HStack {
+                        Text("Preview:")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(settings.organizationPattern.previewExample)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Label("Organization", systemImage: "folder.badge.gearshape")
+            } footer: {
+                Text("Automatically organize downloads into subfolders based on channel, date, or playlist.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             // yt-dlp Settings
@@ -174,7 +234,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 500, height: 580)
+        .frame(width: 500, height: 800)
     }
 
     private func selectOutputDirectory() {

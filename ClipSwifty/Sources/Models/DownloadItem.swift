@@ -73,6 +73,13 @@ struct DownloadItem: Identifiable, Equatable, Codable {
     var outputPath: URL?
     let createdAt: Date
 
+    // Download progress info
+    var downloadSpeed: String?  // e.g. "2.5 MiB/s"
+    var eta: String?            // e.g. "3:42"
+
+    // Queue management
+    var queuePosition: Int = 0
+
     // Format settings for retry/resume
     var isAudioOnly: Bool
     var videoFormat: String
@@ -91,6 +98,8 @@ struct DownloadItem: Identifiable, Equatable, Codable {
         status: DownloadStatus = .fetchingInfo,
         outputPath: URL? = nil,
         createdAt: Date = Date(),
+        downloadSpeed: String? = nil,
+        eta: String? = nil,
         isAudioOnly: Bool = false,
         videoFormat: String = "best",
         audioFormat: String = "mp3",
@@ -107,6 +116,8 @@ struct DownloadItem: Identifiable, Equatable, Codable {
         self.status = status
         self.outputPath = outputPath
         self.createdAt = createdAt
+        self.downloadSpeed = downloadSpeed
+        self.eta = eta
         self.isAudioOnly = isAudioOnly
         self.videoFormat = videoFormat
         self.audioFormat = audioFormat

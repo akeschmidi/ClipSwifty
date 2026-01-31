@@ -2,9 +2,14 @@ import SwiftUI
 import AppKit
 
 struct MainView: View {
-    @StateObject private var viewModel = DownloadViewModel()
+    @ObservedObject var viewModel: DownloadViewModel
     @State private var isHoveringDownload = false
+    @State private var isDragTargeted = false
     @Environment(\.scenePhase) private var scenePhase
+
+    init(viewModel: DownloadViewModel) {
+        self.viewModel = viewModel
+    }
 
     var body: some View {
         ZStack {
@@ -52,6 +57,18 @@ struct MainView: View {
                 }
             )
         }
+        .overlay(alignment: .top) {
+            if viewModel.showClipboardPopup, let url = viewModel.clipboardDetectedURL {
+                ClipboardPopupView(
+                    url: url,
+                    onDownload: { viewModel.downloadFromClipboard() },
+                    onDismiss: { viewModel.dismissClipboardPopup() }
+                )
+                .padding(.top, 80)
+                .padding(.horizontal, 20)
+            }
+        }
+        .animation(.spring(response: 0.3), value: viewModel.showClipboardPopup)
         .onAppear {
             checkClipboardForURL()
         }
@@ -217,21 +234,23 @@ struct MainView: View {
             }
 
             HStack(spacing: 16) {
-                // Video/Audio Toggle - Modern Pill Style
-                MediaTypeToggle(isAudioOnly: $viewModel.isAudioOnly)
+                // Format Presets
+                FormatPresetPicker(selection: $viewModel.selectedPreset)
 
-                // Format Picker
-                if viewModel.isAudioOnly {
-                    AudioFormatPicker(selection: $viewModel.selectedAudioFormat)
-                } else if !viewModel.availableQualities.isEmpty {
-                    // Dynamic quality picker based on available formats
-                    DynamicQualityPicker(
-                        qualities: viewModel.availableQualities,
-                        selection: $viewModel.selectedQuality
-                    )
-                } else {
-                    // Fallback to static picker when no qualities loaded yet
-                    VideoFormatPicker(selection: $viewModel.selectedVideoFormat)
+                // Format Picker (only show when custom or specific format needed)
+                if viewModel.selectedPreset == .custom {
+                    MediaTypeToggle(isAudioOnly: $viewModel.isAudioOnly)
+
+                    if viewModel.isAudioOnly {
+                        AudioFormatPicker(selection: $viewModel.selectedAudioFormat)
+                    } else if !viewModel.availableQualities.isEmpty {
+                        DynamicQualityPicker(
+                            qualities: viewModel.availableQualities,
+                            selection: $viewModel.selectedQuality
+                        )
+                    } else {
+                        VideoFormatPicker(selection: $viewModel.selectedVideoFormat)
+                    }
                 }
 
                 Spacer()
@@ -298,17 +317,131 @@ struct MainView: View {
         }
         .padding(20)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(isDragTargeted ? Color.blue : Color.clear, lineWidth: 3)
+        )
+        .onDrop(of: [.url, .plainText, .fileURL], isTargeted: $isDragTargeted) { providers in
+            handleDrop(providers: providers)
+        }
+    }
+
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        for provider in providers {
+            // Handle .webloc files (Safari bookmarks)
+            if provider.hasItemConformingToTypeIdentifier("public.file-url") {
+                provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, _ in
+                    if let data = item as? Data,
+                       let fileURL = URL(dataRepresentation: data, relativeTo: nil),
+                       fileURL.pathExtension == "webloc" {
+                        // Parse .webloc plist file
+                        if let plistData = try? Data(contentsOf: fileURL),
+                           let plist = try? PropertyListSerialization.propertyList(from: plistData, options: [], format: nil) as? [String: Any],
+                           let urlString = plist["URL"] as? String {
+                            DispatchQueue.main.async {
+                                self.viewModel.urlInput = urlString
+                                self.viewModel.startDownload()
+                            }
+                        }
+                    }
+                }
+                return true
+            }
+
+            // Handle direct URLs
+            if provider.hasItemConformingToTypeIdentifier("public.url") {
+                provider.loadItem(forTypeIdentifier: "public.url", options: nil) { item, _ in
+                    if let data = item as? Data,
+                       let url = URL(dataRepresentation: data, relativeTo: nil) {
+                        DispatchQueue.main.async {
+                            self.viewModel.urlInput = url.absoluteString
+                            self.viewModel.startDownload()
+                        }
+                    } else if let url = item as? URL {
+                        DispatchQueue.main.async {
+                            self.viewModel.urlInput = url.absoluteString
+                            self.viewModel.startDownload()
+                        }
+                    }
+                }
+                return true
+            }
+
+            // Handle plain text (pasted URLs)
+            if provider.hasItemConformingToTypeIdentifier("public.plain-text") {
+                provider.loadItem(forTypeIdentifier: "public.plain-text", options: nil) { item, _ in
+                    if let text = item as? String {
+                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
+                            DispatchQueue.main.async {
+                                self.viewModel.urlInput = trimmed
+                                self.viewModel.startDownload()
+                            }
+                        }
+                    }
+                }
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - Downloads List
 
     private var downloadsList: some View {
-        Group {
-            if viewModel.downloads.isEmpty {
-                emptyStateView
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 12) {
+        VStack(spacing: 0) {
+            // Queue controls header
+            if !viewModel.downloads.isEmpty {
+                HStack(spacing: 12) {
+                    Text("\(viewModel.downloads.count) Downloads")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    if viewModel.hasActiveDownloads {
+                        Button {
+                            viewModel.pauseAll()
+                        } label: {
+                            Label("Alle pausieren", systemImage: "pause.fill")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.orange)
+                    }
+
+                    if viewModel.hasPausedDownloads {
+                        Button {
+                            viewModel.resumeAll()
+                        } label: {
+                            Label("Alle fortsetzen", systemImage: "play.fill")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.green)
+                    }
+
+                    Button {
+                        withAnimation {
+                            viewModel.clearCompleted()
+                        }
+                    } label: {
+                        Label("Fertige löschen", systemImage: "checkmark.circle")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.secondary.opacity(0.05))
+            }
+
+            Group {
+                if viewModel.downloads.isEmpty {
+                    emptyStateView
+                } else {
+                    List {
                         ForEach(viewModel.downloads) { item in
                             DownloadRowView(
                                 item: item,
@@ -321,17 +454,23 @@ struct MainView: View {
                                         viewModel.removeItem(item)
                                     }
                                 },
-                                onShowInFinder: { viewModel.showInFinder(item) }
+                                onShowInFinder: { viewModel.showInFinder(item) },
+                                onMoveUp: { viewModel.moveItemUp(item) },
+                                onMoveDown: { viewModel.moveItemDown(item) },
+                                canMoveUp: viewModel.downloads.first?.id != item.id,
+                                canMoveDown: viewModel.downloads.last?.id != item.id
                             )
-                            .transition(.asymmetric(
-                                insertion: .scale.combined(with: .opacity),
-                                removal: .scale.combined(with: .opacity)
-                            ))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 6, trailing: 4))
+                        }
+                        .onMove { source, destination in
+                            viewModel.moveItem(from: source, to: destination)
                         }
                     }
-                    .padding(4)
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
-                .scrollContentBackground(.hidden)
             }
         }
         .frame(maxHeight: .infinity)
@@ -745,6 +884,107 @@ struct DynamicQualityPicker: View {
     }
 }
 
+// MARK: - Format Preset Picker
+
+struct FormatPresetPicker: View {
+    @Binding var selection: FormatPreset
+
+    var body: some View {
+        Menu {
+            ForEach(FormatPreset.allCases) { preset in
+                Button {
+                    withAnimation(.spring(response: 0.2)) {
+                        selection = preset
+                    }
+                } label: {
+                    Label {
+                        VStack(alignment: .leading) {
+                            Text(preset.displayName)
+                            Text(preset.description)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: preset.icon)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: selection.icon)
+                    .font(.system(size: 12))
+                Text(selection.displayName)
+                    .font(.system(size: 12, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.accentColor.opacity(0.15))
+            )
+            .foregroundStyle(.primary)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+}
+
+// MARK: - Clipboard Popup
+
+struct ClipboardPopupView: View {
+    let url: String
+    let onDownload: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "link.badge.plus")
+                .font(.system(size: 20))
+                .foregroundStyle(.blue)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Video-URL erkannt")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(url)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .frame(maxWidth: 250, alignment: .leading)
+
+            Spacer()
+
+            Button {
+                onDownload()
+            } label: {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 24))
+                    .foregroundStyle(.blue)
+            }
+            .buttonStyle(.plain)
+            .help("Jetzt herunterladen")
+
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Schließen")
+        }
+        .padding(16)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 5)
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+}
+
 // MARK: - Download Row
 
 struct DownloadRowView: View {
@@ -755,6 +995,10 @@ struct DownloadRowView: View {
     let onCancel: () -> Void
     let onRemove: () -> Void
     let onShowInFinder: () -> Void
+    var onMoveUp: (() -> Void)? = nil
+    var onMoveDown: (() -> Void)? = nil
+    var canMoveUp: Bool = false
+    var canMoveDown: Bool = false
     @State private var isHovering = false
 
     private var isCompleted: Bool {
@@ -865,6 +1109,31 @@ struct DownloadRowView: View {
                 .accessibilityLabel("Cancel")
             }
 
+            // Move buttons (only show when hovering and not downloading)
+            if isHovering && !item.status.isActive {
+                if canMoveUp, let moveUp = onMoveUp {
+                    Button(action: moveUp) {
+                        Image(systemName: "chevron.up.circle.fill")
+                            .font(.system(size: 22))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Move up")
+                }
+
+                if canMoveDown, let moveDown = onMoveDown {
+                    Button(action: moveDown) {
+                        Image(systemName: "chevron.down.circle.fill")
+                            .font(.system(size: 22))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Move down")
+                }
+            }
+
             // Remove button
             Button(action: onRemove) {
                 Image(systemName: "trash.circle.fill")
@@ -927,10 +1196,22 @@ struct DownloadRowView: View {
             switch item.status {
             case .downloading(let progress):
                 progressBar(progress: progress)
-                Text(String(format: "%3d%%", Int(progress * 100)))
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 40, alignment: .trailing)
+                HStack(spacing: 6) {
+                    Text(String(format: "%3d%%", Int(progress * 100)))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 36, alignment: .trailing)
+                    if let speed = item.downloadSpeed {
+                        Text(speed)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.blue)
+                    }
+                    if let eta = item.eta {
+                        Text("ETA \(eta)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
             case .paused(let progress):
                 progressBar(progress: progress)
                 Text(String(format: "%3d%%", Int(progress * 100)))
@@ -1021,6 +1302,6 @@ extension DownloadStatus {
 }
 
 #Preview {
-    MainView()
+    MainView(viewModel: DownloadViewModel())
         .frame(width: 650, height: 550)
 }

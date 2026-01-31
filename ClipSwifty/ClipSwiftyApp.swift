@@ -7,12 +7,14 @@ private let logger = Logger(subsystem: "com.clipswifty", category: "App")
 struct ClipSwiftyApp: App {
     @StateObject private var settings = AppSettings.shared
     @StateObject private var updateManager = UpdateManager.shared
+    @StateObject private var downloadViewModel = DownloadViewModel()
     @State private var showDisclaimer = false
 
     var body: some Scene {
         WindowGroup {
-            MainView()
+            MainView(viewModel: downloadViewModel)
                 .frame(minWidth: 800, minHeight: 600)
+                .preferredColorScheme(settings.appearanceMode.colorScheme)
                 .sheet(isPresented: $showDisclaimer) {
                     DisclaimerView(isPresented: $showDisclaimer)
                 }
@@ -57,6 +59,23 @@ struct ClipSwiftyApp: App {
         Settings {
             SettingsView()
         }
+
+        MenuBarExtra {
+            MenuBarView(viewModel: downloadViewModel)
+        } label: {
+            Label {
+                Text("ClipSwifty")
+            } icon: {
+                if downloadViewModel.activeDownloadCount > 0 {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, .blue)
+                } else {
+                    Image(systemName: "arrow.down.circle")
+                }
+            }
+        }
+        .menuBarExtraStyle(.window)
     }
 
     private func checkFirstLaunch() {
