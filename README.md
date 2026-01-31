@@ -71,6 +71,24 @@ ClipSwifty supports **thousands of websites** including:
 - Twitch
 - And [many more...](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
 
+## ⚠️ Important Notice / Disclaimer
+
+> **Please read this carefully before using ClipSwifty.**
+
+### 📋 Copyright Compliance
+Only download content you have permission to download. Respect copyright laws and the terms of service of content platforms.
+
+### 👤 Personal Use
+This app is intended for downloading content for personal, non-commercial use only.
+
+### ✋ Your Responsibility
+You are solely responsible for how you use this app. The developers are not liable for any misuse.
+
+### 🔗 Third-Party Tool
+This app uses yt-dlp, an open-source tool. ClipSwifty is not affiliated with any video platforms.
+
+**By using this app, you agree to use it responsibly and in compliance with applicable laws.**
+
 ## Building from Source
 
 ```bash
@@ -93,15 +111,6 @@ open ClipSwifty.xcodeproj
 ```
 
 This will build, sign, notarize, and publish to GitHub automatically.
-
-## Legal Disclaimer
-
-ClipSwifty is a tool for downloading videos for **personal, offline use only**.
-
-- Always respect copyright laws in your country
-- Only download content you have the right to download
-- Do not use this tool for piracy or copyright infringement
-- The developers are not responsible for misuse of this software
 
 ## Acknowledgments
 
@@ -128,6 +137,26 @@ The Swiss Army knife of multimedia processing. FFmpeg handles all the audio/vide
 - **Apple** for SwiftUI and making native Mac development a joy
 - All contributors and users who help make ClipSwifty better
 
+## ☕ Support the Project
+
+Did ClipSwifty save you from sketchy download websites full of ads and pop-ups?
+
+Did it rescue your offline movie collection from extinction?
+
+Is your Downloads folder now suspiciously full of "educational content"? 😏
+
+<p align="center">
+  <a href="https://buymeacoffee.com/akeschmidii">
+    <img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-☕-yellow?style=for-the-badge" alt="Buy me a coffee">
+  </a>
+</p>
+
+<p align="center">
+  <em>Your support helps keep the developer caffeinated and the app updated! 🚀</em>
+</p>
+
+Every coffee ☕ = One less bug 🐛 (probably)
+
 ## Contributing
 
 Contributions are welcome! Feel free to:
@@ -143,7 +172,7 @@ ClipSwifty is released under the MIT License. See [LICENSE](LICENSE) for details
 ---
 
 <p align="center">
-  Made with ❤️ in Switzerland
+  Made with ❤️ in Switzerland 🇨🇭
 </p>
 
 <p align="center">
