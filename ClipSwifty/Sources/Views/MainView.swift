@@ -526,35 +526,45 @@ struct MainView: View {
                 if viewModel.downloads.isEmpty {
                     emptyStateView
                 } else {
-                    List {
-                        ForEach(viewModel.downloads) { item in
-                            DownloadRowView(
-                                item: item,
-                                onPause: { viewModel.pauseDownload(item) },
-                                onResume: { viewModel.resumeDownload(item) },
-                                onRetry: { viewModel.retryDownload(item) },
-                                onCancel: { viewModel.cancelDownload(item) },
-                                onRemove: {
-                                    withAnimation(.spring(response: 0.3)) {
-                                        viewModel.removeItem(item)
-                                    }
-                                },
-                                onShowInFinder: { viewModel.showInFinder(item) },
-                                onMoveUp: { viewModel.moveItemUp(item) },
-                                onMoveDown: { viewModel.moveItemDown(item) },
-                                canMoveUp: viewModel.downloads.first?.id != item.id,
-                                canMoveDown: viewModel.downloads.last?.id != item.id
-                            )
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 6, trailing: 4))
+                    ScrollViewReader { proxy in
+                        List {
+                            ForEach(viewModel.downloads) { item in
+                                DownloadRowView(
+                                    item: item,
+                                    onPause: { viewModel.pauseDownload(item) },
+                                    onResume: { viewModel.resumeDownload(item) },
+                                    onRetry: { viewModel.retryDownload(item) },
+                                    onCancel: { viewModel.cancelDownload(item) },
+                                    onRemove: {
+                                        withAnimation(.spring(response: 0.3)) {
+                                            viewModel.removeItem(item)
+                                        }
+                                    },
+                                    onShowInFinder: { viewModel.showInFinder(item) },
+                                    onMoveUp: { viewModel.moveItemUp(item) },
+                                    onMoveDown: { viewModel.moveItemDown(item) },
+                                    canMoveUp: viewModel.downloads.first?.id != item.id,
+                                    canMoveDown: viewModel.downloads.last?.id != item.id
+                                )
+                                .id(item.id)
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                                .listRowInsets(EdgeInsets(top: 6, leading: 4, bottom: 6, trailing: 4))
+                            }
+                            .onMove { source, destination in
+                                viewModel.moveItem(from: source, to: destination)
+                            }
                         }
-                        .onMove { source, destination in
-                            viewModel.moveItem(from: source, to: destination)
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .onChange(of: viewModel.downloads.first?.id) { _, newId in
+                            if let id = newId {
+                                withAnimation(.spring(response: 0.3)) {
+                                    proxy.scrollTo(id, anchor: .top)
+                                }
+                            }
                         }
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
                 }
             }
         }
@@ -866,7 +876,7 @@ struct VideoFormatPicker: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(VideoFormat.allCases) { format in
+            ForEach(VideoFormat.allCases.filter { $0 != .best }) { format in
                 Button {
                     withAnimation(.spring(response: 0.2)) {
                         selection = format

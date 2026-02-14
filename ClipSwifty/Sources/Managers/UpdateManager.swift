@@ -7,11 +7,13 @@ struct GitHubRelease: Codable {
     let tagName: String
     let publishedAt: String
     let name: String
+    let htmlUrl: String
 
     enum CodingKeys: String, CodingKey {
         case tagName = "tag_name"
         case publishedAt = "published_at"
         case name
+        case htmlUrl = "html_url"
     }
 }
 
@@ -24,6 +26,10 @@ final class UpdateManager: ObservableObject {
     @Published var currentVersion: String?
     @Published var latestVersion: String?
     @Published var updateAvailable = false
+
+    @Published var appUpdateAvailable = false
+    @Published var latestAppVersion: String?
+    @Published var appReleaseURL: String?
 
     private let ytDlpManager = YtDlpManager.shared
     private let settings = AppSettings.shared
@@ -183,6 +189,64 @@ final class UpdateManager: ObservableObject {
             // Just do background check
             checkForUpdatesInBackground()
         }
+    }
+
+    // MARK: - App Update Check
+
+    func checkForAppUpdate() {
+        Task {
+            await performAppUpdateCheck()
+        }
+    }
+
+    private func performAppUpdateCheck() async {
+        logger.info("Checking for ClipSwifty app update...")
+
+        do {
+            guard let url = URL(string: "https://api.github.com/repos/akeschmidi/ClipSwifty/releases/latest") else {
+                return
+            }
+
+            var request = URLRequest(url: url)
+            request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+            request.timeoutInterval = 10
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                logger.warning("App update check failed: bad response")
+                return
+            }
+
+            let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+            let currentAppVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+
+            if isNewerAppVersion(release.tagName, than: currentAppVersion) {
+                logger.info("App update available: \(currentAppVersion) -> \(release.tagName)")
+                latestAppVersion = release.tagName.hasPrefix("v") ? String(release.tagName.dropFirst()) : release.tagName
+                appReleaseURL = release.htmlUrl
+                appUpdateAvailable = true
+            } else {
+                logger.info("App is up to date: \(currentAppVersion)")
+            }
+        } catch {
+            logger.error("App update check failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func isNewerAppVersion(_ latest: String, than current: String) -> Bool {
+        let latestClean = latest.hasPrefix("v") ? String(latest.dropFirst()) : latest
+        let latestParts = latestClean.split(separator: ".").compactMap { Int($0) }
+        let currentParts = current.split(separator: ".").compactMap { Int($0) }
+
+        for i in 0..<max(latestParts.count, currentParts.count) {
+            let l = i < latestParts.count ? latestParts[i] : 0
+            let c = i < currentParts.count ? currentParts[i] : 0
+            if l > c { return true }
+            if l < c { return false }
+        }
+        return false
     }
 
     /// Force a complete reinstall of yt-dlp

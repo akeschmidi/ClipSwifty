@@ -46,10 +46,22 @@ struct ClipSwiftyApp: App {
                         )
                     }
                 }
+                .alert("Update verfügbar", isPresented: $updateManager.appUpdateAvailable) {
+                    Button("Öffnen") {
+                        if let urlString = updateManager.appReleaseURL,
+                           let url = URL(string: urlString) {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    Button("Später", role: .cancel) {}
+                } message: {
+                    Text("ClipSwifty \(updateManager.latestAppVersion ?? "") ist verfügbar. Möchtest du die Update-Seite öffnen?")
+                }
                 .onAppear {
                     checkFirstLaunch()
                     // Silent background check
                     updateManager.checkForUpdatesInBackground()
+                    updateManager.checkForAppUpdate()
                 }
         }
         .windowStyle(.hiddenTitleBar)

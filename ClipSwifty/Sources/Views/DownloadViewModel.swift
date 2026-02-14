@@ -13,7 +13,7 @@ final class DownloadViewModel: ObservableObject {
             prefetchVideoInfo()
         }
     }
-    @Published var selectedVideoFormat: VideoFormat = .best
+    @Published var selectedVideoFormat: VideoFormat = .quality4k
     @Published var selectedAudioFormat: AudioFormat = .mp3
     @Published var isAudioOnly: Bool = false
     @Published var isPlaylistDetected: Bool = false
@@ -559,7 +559,9 @@ final class DownloadViewModel: ObservableObject {
             isPlaylist: false,
             estimatedFileSize: estSize
         )
-        downloads.insert(item, at: 0)
+        withAnimation(.spring(response: 0.3)) {
+            downloads.insert(item, at: 0)
+        }
         scheduleSave(immediate: true)
 
         // Cancel prefetch and clear indicator immediately
@@ -839,7 +841,9 @@ final class DownloadViewModel: ObservableObject {
             audioFormat: selectedAudioFormat.rawValue,
             isPlaylist: false
         )
-        downloads.insert(item, at: 0)
+        withAnimation(.spring(response: 0.3)) {
+            downloads.insert(item, at: 0)
+        }
         scheduleSave(immediate: true)
 
         Task {
@@ -1358,23 +1362,24 @@ final class DownloadViewModel: ObservableObject {
             } else if let format = VideoFormat(rawValue: item.videoFormat) {
                 args += format.ytDlpArguments
             } else {
-                args += VideoFormat.best.ytDlpArguments
+                args += VideoFormat.quality4k.ytDlpArguments
             }
         }
 
         // Performance optimizations - speed up extraction and download
         let fragments = AppSettings.shared.concurrentFragments
         args += [
-            "--concurrent-fragments", "\(fragments)", // Download fragments in parallel
-            "--buffer-size", "16K",                   // Larger buffer for faster IO
-            "--http-chunk-size", "10M",               // Larger chunks
-            "--retries", "3",                         // Quick retries
+            "--concurrent-fragments", "\(fragments)",
+            "--buffer-size", "1M",
+            "--http-chunk-size", "10M",
+            "--throttled-rate", "100K",
+            "--retries", "3",
             "--fragment-retries", "3",
-            "--no-check-certificates",                // Skip cert validation (faster)
-            "--no-warnings",                          // Skip warnings
-            "--no-check-formats",                     // Don't verify format URLs (faster)
-            "--extractor-retries", "1",               // Fewer extractor retries
-            "--socket-timeout", "10",                 // Shorter socket timeout
+            "--no-check-certificates",
+            "--no-warnings",
+            "--no-check-formats",
+            "--extractor-retries", "3",
+            "--socket-timeout", "30",
         ]
 
         // Add rate limit if configured
