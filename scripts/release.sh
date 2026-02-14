@@ -88,27 +88,31 @@ echo -e "${YELLOW}🔏 Signing embedded binaries with hardened runtime...${NC}"
 APP_PATH="$EXPORT_PATH/$APP_NAME.app"
 RESOURCES_PATH="$APP_PATH/Contents/Resources"
 
+# Entitlements for helper binaries (allows loading PyInstaller-extracted Python libs)
+HELPER_ENTITLEMENTS="$PROJECT_DIR/ClipSwifty/HelperTools.entitlements"
+
 # Sign yt-dlp_macos
 if [ -f "$RESOURCES_PATH/yt-dlp_macos" ]; then
-    codesign --force --options runtime --sign "$SIGNING_IDENTITY" "$RESOURCES_PATH/yt-dlp_macos"
+    codesign --force --options runtime --entitlements "$HELPER_ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$RESOURCES_PATH/yt-dlp_macos"
     echo "   ✅ Signed yt-dlp_macos"
 fi
 
 # Sign ffmpeg
 if [ -f "$RESOURCES_PATH/ffmpeg" ]; then
-    codesign --force --options runtime --sign "$SIGNING_IDENTITY" "$RESOURCES_PATH/ffmpeg"
+    codesign --force --options runtime --entitlements "$HELPER_ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$RESOURCES_PATH/ffmpeg"
     echo "   ✅ Signed ffmpeg"
 fi
 
 # Sign ffprobe if exists
 if [ -f "$RESOURCES_PATH/ffprobe" ]; then
-    codesign --force --options runtime --sign "$SIGNING_IDENTITY" "$RESOURCES_PATH/ffprobe"
+    codesign --force --options runtime --entitlements "$HELPER_ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$RESOURCES_PATH/ffprobe"
     echo "   ✅ Signed ffprobe"
 fi
 
-# Re-sign the entire app bundle
+# Re-sign the entire app bundle with entitlements
 echo -e "${YELLOW}🔏 Re-signing app bundle...${NC}"
-codesign --force --deep --options runtime --sign "$SIGNING_IDENTITY" "$APP_PATH"
+APP_ENTITLEMENTS="$PROJECT_DIR/ClipSwifty/ClipSwifty.entitlements"
+codesign --force --deep --options runtime --entitlements "$APP_ENTITLEMENTS" --sign "$SIGNING_IDENTITY" "$APP_PATH"
 echo -e "${GREEN}✅ App signed with hardened runtime${NC}"
 
 # Verify signature

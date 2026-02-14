@@ -13,24 +13,24 @@ enum DownloadStatus: Equatable, Codable {
     var displayText: String {
         switch self {
         case .fetchingInfo:
-            return "Fetching info..."
+            return "Infos laden..."
         case .pending:
-            return "Waiting..."
+            return "Wartend..."
         case .preparing(let status):
             return status
         case .downloading(let progress):
             if progress < 0.01 {
-                return "Starting download..."
+                return "Download startet..."
             }
-            return "Downloading \(Int(progress * 100))%"
+            return "Laden \(min(100, max(0, Int(progress * 100))))%"
         case .paused(let progress):
-            return "Paused at \(Int(progress * 100))%"
+            return "Pausiert bei \(min(100, max(0, Int(progress * 100))))%"
         case .converting:
-            return "Converting..."
+            return "Konvertiere..."
         case .completed:
-            return "Completed"
+            return "Abgeschlossen"
         case .failed(let message):
-            return "Failed: \(message)"
+            return "Fehler: \(message)"
         }
     }
 
@@ -88,6 +88,16 @@ struct DownloadItem: Identifiable, Equatable, Codable {
     var playlistIndex: Int?
     var playlistTitle: String?
 
+    // F2: Error detail (raw stderr for "show details")
+    var errorDetail: String?
+
+    // F1: Estimated file size in bytes
+    var estimatedFileSize: Int?
+
+    // F5: Retry tracking
+    var retryCount: Int = 0
+    var maxRetries: Int = 3
+
     init(
         id: UUID = UUID(),
         url: String,
@@ -105,7 +115,11 @@ struct DownloadItem: Identifiable, Equatable, Codable {
         audioFormat: String = "mp3",
         isPlaylist: Bool = false,
         playlistIndex: Int? = nil,
-        playlistTitle: String? = nil
+        playlistTitle: String? = nil,
+        errorDetail: String? = nil,
+        estimatedFileSize: Int? = nil,
+        retryCount: Int = 0,
+        maxRetries: Int = 3
     ) {
         self.id = id
         self.url = url
@@ -124,6 +138,10 @@ struct DownloadItem: Identifiable, Equatable, Codable {
         self.isPlaylist = isPlaylist
         self.playlistIndex = playlistIndex
         self.playlistTitle = playlistTitle
+        self.errorDetail = errorDetail
+        self.estimatedFileSize = estimatedFileSize
+        self.retryCount = retryCount
+        self.maxRetries = maxRetries
     }
 
     mutating func updateWithVideoInfo(_ info: VideoInfo) {

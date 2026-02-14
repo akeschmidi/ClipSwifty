@@ -42,7 +42,7 @@ struct MenuBarView: View {
                                 .font(.system(size: 12))
                                 .foregroundStyle(.tertiary)
 
-                            TextField("Paste URL...", text: $quickURL)
+                            TextField("URL einfügen...", text: $quickURL)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 13))
                                 .onSubmit {
@@ -105,7 +105,6 @@ struct MenuBarView: View {
             HStack(spacing: 0) {
                 Button {
                     NSApp.activate(ignoringOtherApps: true)
-                    // Find and activate the main window
                     for window in NSApp.windows {
                         if window.contentViewController != nil &&
                            !window.title.contains("Menu") &&
@@ -142,6 +141,23 @@ struct MenuBarView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.primary)
+
+                Divider()
+                    .frame(height: 20)
+
+                Button {
+                    NSApp.terminate(nil)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "power")
+                        Text("Beenden")
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.red)
             }
             .background(Color(nsColor: .windowBackgroundColor))
         }

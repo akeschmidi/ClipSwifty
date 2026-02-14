@@ -119,6 +119,36 @@ struct VideoInfo: Codable {
         return AvailableQuality.fromFormats(formats)
     }
 
+    /// Estimate file size by finding best video format <= target height + best audio format
+    /// Returns nil if filesize info is not available from yt-dlp
+    func estimatedFileSize(forMaxHeight maxHeight: Int?, isAudioOnly: Bool) -> Int? {
+        guard let formats = formats else { return nil }
+
+        if isAudioOnly {
+            // Find best audio-only format with filesize
+            let audioFormats = formats.filter { $0.isAudioOnly && $0.filesize != nil }
+            guard let bestAudio = audioFormats.max(by: { ($0.tbr ?? 0) < ($1.tbr ?? 0) }) else { return nil }
+            return bestAudio.filesize
+        }
+
+        // Find best video format <= target height
+        let targetHeight = maxHeight ?? 9999
+        let videoFormats = formats.filter {
+            $0.vcodec != "none" && $0.vcodec != nil &&
+            ($0.height ?? 0) > 0 && ($0.height ?? 0) <= targetHeight &&
+            $0.filesize != nil
+        }
+        let audioFormats = formats.filter { $0.isAudioOnly && $0.filesize != nil }
+
+        guard let bestVideo = videoFormats.max(by: { ($0.height ?? 0) < ($1.height ?? 0) }) else { return nil }
+
+        let videoSize = bestVideo.filesize ?? 0
+        let audioSize = audioFormats.max(by: { ($0.tbr ?? 0) < ($1.tbr ?? 0) })?.filesize ?? 0
+
+        let total = videoSize + audioSize
+        return total > 0 ? total : nil
+    }
+
     enum CodingKeys: String, CodingKey {
         case title
         case thumbnail

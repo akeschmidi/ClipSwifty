@@ -299,11 +299,17 @@ final class AppSettings: ObservableObject {
            FileManager.default.fileExists(atPath: path) {
             self.outputDirectory = URL(fileURLWithPath: path)
         } else {
-            self.outputDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+            self.outputDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+                ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
         }
     }
 
     // MARK: - Methods
+
+    private static var defaultDownloadsDirectory: URL {
+        FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
+    }
 
     func resetToDefaults() {
         hasSeenDisclaimer = false
@@ -319,6 +325,6 @@ final class AppSettings: ObservableObject {
         notificationsEnabled = true
         clipboardMonitoring = false
         selectedPreset = .custom
-        outputDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+        outputDirectory = Self.defaultDownloadsDirectory
     }
 }

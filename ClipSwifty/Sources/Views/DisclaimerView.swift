@@ -12,7 +12,7 @@ struct DisclaimerView: View {
                     .font(.system(size: 48))
                     .foregroundStyle(.yellow)
 
-                Text("Important Notice")
+                Text("Wichtiger Hinweis")
                     .font(.title2)
                     .fontWeight(.bold)
             }
@@ -21,26 +21,26 @@ struct DisclaimerView: View {
             VStack(alignment: .leading, spacing: 16) {
                 DisclaimerSection(
                     icon: "doc.on.doc",
-                    title: "Copyright Compliance",
-                    text: "Only download content you have permission to download. Respect copyright laws and the terms of service of content platforms."
+                    title: "Urheberrecht beachten",
+                    text: "Lade nur Inhalte herunter, für die du eine Berechtigung hast. Respektiere das Urheberrecht und die Nutzungsbedingungen der Plattformen."
                 )
 
                 DisclaimerSection(
                     icon: "person.fill.checkmark",
-                    title: "Personal Use",
-                    text: "This app is intended for downloading content for personal, non-commercial use only."
+                    title: "Persönliche Nutzung",
+                    text: "Diese App ist ausschließlich zum Herunterladen von Inhalten für den persönlichen, nicht-kommerziellen Gebrauch gedacht."
                 )
 
                 DisclaimerSection(
                     icon: "hand.raised.fill",
-                    title: "Your Responsibility",
-                    text: "You are solely responsible for how you use this app. The developers are not liable for any misuse."
+                    title: "Deine Verantwortung",
+                    text: "Du bist allein verantwortlich für die Nutzung dieser App. Die Entwickler haften nicht für Missbrauch."
                 )
 
                 DisclaimerSection(
                     icon: "link",
-                    title: "Third-Party Tool",
-                    text: "This app uses yt-dlp, an open-source tool. ClipSwifty is not affiliated with any video platforms."
+                    title: "Drittanbieter-Tool",
+                    text: "Diese App verwendet yt-dlp, ein Open-Source-Tool. ClipSwifty ist nicht mit Videoplattformen verbunden."
                 )
             }
             .padding()
@@ -48,13 +48,13 @@ struct DisclaimerView: View {
 
             // Agreement
             VStack(spacing: 12) {
-                Text("By using this app, you agree to use it responsibly and in compliance with applicable laws.")
+                Text("Mit der Nutzung dieser App erklärst du dich damit einverstanden, sie verantwortungsvoll und im Einklang mit geltendem Recht zu verwenden.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
                 Button(action: acceptDisclaimer) {
-                    Text("I Understand and Agree")
+                    Text("Verstanden und einverstanden")
                         .fontWeight(.semibold)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)

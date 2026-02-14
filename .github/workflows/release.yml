@@ -115,18 +115,24 @@ jobs:
           SIGNING_IDENTITY="Developer ID Application: Stefan Schwinghammer ($TEAM_ID)"
           APP_PATH="build/Export/$APP_NAME.app"
 
-          # Sign yt-dlp and ffmpeg with hardened runtime
+          # Entitlements for helper binaries (allows loading PyInstaller-extracted Python libs)
+          HELPER_ENTITLEMENTS="${{ github.workspace }}/$APP_NAME/HelperTools.entitlements"
+
+          # Sign yt-dlp and ffmpeg with hardened runtime and entitlements
           for binary in yt-dlp_macos ffmpeg; do
             if [ -f "$APP_PATH/Contents/Resources/$binary" ]; then
               codesign --force --options runtime --timestamp \
+                --entitlements "$HELPER_ENTITLEMENTS" \
                 --sign "$SIGNING_IDENTITY" \
                 "$APP_PATH/Contents/Resources/$binary"
               echo "✅ Signed $binary"
             fi
           done
 
-          # Re-sign the app bundle
+          # Re-sign the app bundle with entitlements
+          APP_ENTITLEMENTS="${{ github.workspace }}/$APP_NAME/ClipSwifty.entitlements"
           codesign --force --deep --options runtime --timestamp \
+            --entitlements "$APP_ENTITLEMENTS" \
             --sign "$SIGNING_IDENTITY" \
             "$APP_PATH"
 

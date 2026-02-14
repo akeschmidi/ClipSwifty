@@ -24,6 +24,10 @@
 		A1000010001 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000010000 /* SettingsView.swift */; };
 		A1000011001 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000011000 /* MenuBarView.swift */; };
 		C99FF0242F2D49D200C2B1C5 /* ClipSwifty.icon in Resources */ = {isa = PBXBuildFile; fileRef = C99FF0232F2D49D200C2B1C5 /* ClipSwifty.icon */; };
+		A1000012001 /* ErrorMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000012000 /* ErrorMapper.swift */; };
+		A1000013001 /* DownloadHistoryItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000013000 /* DownloadHistoryItem.swift */; };
+		A1000014001 /* DownloadHistoryManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000014000 /* DownloadHistoryManager.swift */; };
+		A1000015001 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000015000 /* HistoryView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -46,6 +50,10 @@
 		A1000010000 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A1000011000 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		C99FF0232F2D49D200C2B1C5 /* ClipSwifty.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = ClipSwifty.icon; sourceTree = "<group>"; };
+		A1000012000 /* ErrorMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorMapper.swift; sourceTree = "<group>"; };
+		A1000013000 /* DownloadHistoryItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadHistoryItem.swift; sourceTree = "<group>"; };
+		A1000014000 /* DownloadHistoryManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadHistoryManager.swift; sourceTree = "<group>"; };
+		A1000015000 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -107,6 +115,7 @@
 				A1000006000 /* DownloadItem.swift */,
 				A100000C000 /* VideoInfo.swift */,
 				A100000D000 /* AppSettings.swift */,
+				A1000013000 /* DownloadHistoryItem.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -119,6 +128,7 @@
 				A100000F000 /* DisclaimerView.swift */,
 				A1000010000 /* SettingsView.swift */,
 				A1000011000 /* MenuBarView.swift */,
+				A1000015000 /* HistoryView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -128,6 +138,7 @@
 			children = (
 				A1000004000 /* YtDlpManager.swift */,
 				A100000E000 /* UpdateManager.swift */,
+				A1000014000 /* DownloadHistoryManager.swift */,
 			);
 			path = Managers;
 			sourceTree = "<group>";
@@ -152,6 +163,7 @@
 			isa = PBXGroup;
 			children = (
 				A1000003000 /* Constants.swift */,
+				A1000012000 /* ErrorMapper.swift */,
 			);
 			path = Utilities;
 			sourceTree = "<group>";
@@ -241,6 +253,10 @@
 				A100000F001 /* DisclaimerView.swift in Sources */,
 				A1000010001 /* SettingsView.swift in Sources */,
 				A1000011001 /* MenuBarView.swift in Sources */,
+				A1000012001 /* ErrorMapper.swift in Sources */,
+				A1000013001 /* DownloadHistoryItem.swift in Sources */,
+				A1000014001 /* DownloadHistoryManager.swift in Sources */,
+				A1000015001 /* HistoryView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -393,7 +409,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.clipswifty.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -425,7 +441,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.clipswifty.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

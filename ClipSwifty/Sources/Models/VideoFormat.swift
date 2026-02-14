@@ -13,7 +13,7 @@ enum VideoFormat: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .best: return "Best"
+        case .best: return "Beste"
         case .quality4k: return "4K (2160p)"
         case .quality1440p: return "1440p"
         case .quality1080p: return "1080p"

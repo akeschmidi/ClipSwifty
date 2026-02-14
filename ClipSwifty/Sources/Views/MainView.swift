@@ -35,7 +35,7 @@ struct MainView: View {
             }
         }
         .frame(minWidth: 600, minHeight: 500)
-        .alert("Error", isPresented: .init(
+        .alert("Fehler", isPresented: .init(
             get: { viewModel.errorMessage != nil },
             set: { if !$0 { viewModel.errorMessage = nil } }
         )) {
@@ -57,6 +57,23 @@ struct MainView: View {
                 }
             )
         }
+        // F4: History sheet
+        .sheet(isPresented: $viewModel.showHistory) {
+            HistoryView()
+        }
+        // F4: Duplicate warning
+        .alert("Bereits heruntergeladen", isPresented: $viewModel.showDuplicateWarning) {
+            Button("Trotzdem laden") {
+                viewModel.confirmDuplicateDownload()
+            }
+            Button("Abbrechen", role: .cancel) {
+                viewModel.cancelDuplicateDownload()
+            }
+        } message: {
+            if let item = viewModel.duplicateHistoryItem {
+                Text("\"\(item.title ?? item.url)\" wurde bereits heruntergeladen.")
+            }
+        }
         .overlay(alignment: .top) {
             if viewModel.showClipboardPopup, let url = viewModel.clipboardDetectedURL {
                 ClipboardPopupView(
@@ -76,6 +93,13 @@ struct MainView: View {
             if newPhase == .active {
                 checkClipboardForURL()
             }
+        }
+        // F1: Recalculate file size when quality or audio mode changes
+        .onChange(of: viewModel.selectedQuality) { _, _ in
+            viewModel.recalculateFileSize()
+        }
+        .onChange(of: viewModel.isAudioOnly) { _, _ in
+            viewModel.recalculateFileSize()
         }
     }
 
@@ -126,17 +150,30 @@ struct MainView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("ClipSwifty")
                         .font(.system(size: 16, weight: .semibold))
-                    Text("Video Downloader")
+                    Text("Video-Downloader")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("ClipSwifty Video Downloader")
+            .accessibilityLabel("ClipSwifty Video-Downloader")
 
             Spacer()
 
             HStack(spacing: 12) {
+                // F4: History button
+                Button {
+                    viewModel.showHistory = true
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        .padding(8)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Download-Verlauf")
+
                 Button(action: viewModel.selectOutputDirectory) {
                     HStack(spacing: 6) {
                         Image(systemName: "folder.fill")
@@ -152,9 +189,9 @@ struct MainView: View {
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
-                .help("Save to: \(viewModel.outputDirectory.path)")
-                .accessibilityLabel("Output folder: \(viewModel.outputDirectory.lastPathComponent)")
-                .accessibilityHint("Double-click to change download location")
+                .help("Speichern unter: \(viewModel.outputDirectory.path)")
+                .accessibilityLabel("Zielordner: \(viewModel.outputDirectory.lastPathComponent)")
+                .accessibilityHint("Doppelklick zum Ändern des Speicherorts")
 
                 SettingsLink {
                     Image(systemName: "gearshape.fill")
@@ -164,8 +201,8 @@ struct MainView: View {
                         .background(.ultraThinMaterial, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Settings")
-                .accessibilityLabel("Open settings")
+                .help("Einstellungen")
+                .accessibilityLabel("Einstellungen öffnen")
             }
         }
         .padding(.horizontal, 20)
@@ -177,26 +214,54 @@ struct MainView: View {
     private var inputCard: some View {
         VStack(spacing: 16) {
             HStack(spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: "link")
-                        .foregroundStyle(.tertiary)
-                        .font(.system(size: 14))
-                        .accessibilityHidden(true)
+                // F3: Switch between TextField and TextEditor for batch mode
+                VStack(spacing: 0) {
+                    if viewModel.isBatchMode {
+                        HStack(spacing: 10) {
+                            Image(systemName: "link")
+                                .foregroundStyle(.tertiary)
+                                .font(.system(size: 14))
+                                .accessibilityHidden(true)
+                                .padding(.top, 8)
 
-                    TextField("Paste video URL...", text: $viewModel.urlInput)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 14))
-                        .onSubmit { viewModel.startDownload() }
-                        .accessibilityLabel("Video URL")
-                        .accessibilityHint("Enter a video URL to download")
+                            TextEditor(text: $viewModel.urlInput)
+                                .font(.system(size: 13, design: .monospaced))
+                                .scrollContentBackground(.hidden)
+                                .accessibilityLabel("Video-URLs")
+                                .accessibilityHint("Mehrere Video-URLs eingeben, eine pro Zeile")
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .frame(height: 80)
+                        .background(.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(.quaternary, lineWidth: 1)
+                        )
+                    } else {
+                        HStack(spacing: 10) {
+                            Image(systemName: "link")
+                                .foregroundStyle(.tertiary)
+                                .font(.system(size: 14))
+                                .accessibilityHidden(true)
+
+                            TextField("Video-URL einfügen...", text: $viewModel.urlInput)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 14))
+                                .onSubmit { viewModel.startDownload() }
+                                .accessibilityLabel("Video-URL")
+                                .accessibilityHint("Video-URL zum Herunterladen eingeben")
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(.quaternary, lineWidth: 1)
+                        )
+                    }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(.quaternary, lineWidth: 1)
-                )
+                .animation(.spring(response: 0.3), value: viewModel.isBatchMode)
 
                 Button(action: viewModel.startDownload) {
                     Group {
@@ -229,8 +294,8 @@ struct MainView: View {
                 .onHover { isHoveringDownload = $0 }
                 .disabled(viewModel.urlInput.isEmpty || viewModel.isFetchingPlaylist)
                 .keyboardShortcut(.return, modifiers: .command)
-                .accessibilityLabel("Download")
-                .accessibilityHint("Start downloading the video")
+                .accessibilityLabel("Herunterladen")
+                .accessibilityHint("Video herunterladen")
             }
 
             HStack(spacing: 16) {
@@ -255,8 +320,22 @@ struct MainView: View {
 
                 Spacer()
 
-                // Prefetch indicator (shows video info as it loads)
-                if viewModel.isPrefetching || viewModel.prefetchedTitle != nil {
+                // F3: Batch mode counter
+                if viewModel.isBatchMode {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.on.doc.fill")
+                            .font(.system(size: 12))
+                        Text("\(viewModel.detectedURLs.count) URLs erkannt")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.orange.opacity(0.15)))
+                    .foregroundStyle(.orange)
+                }
+
+                // Prefetch indicator (shows video info as it loads) - hidden in batch mode
+                if !viewModel.isBatchMode && (viewModel.isPrefetching || viewModel.prefetchedTitle != nil) {
                     HStack(spacing: 6) {
                         if viewModel.isPrefetching {
                             ProgressView()
@@ -286,13 +365,23 @@ struct MainView: View {
                     .animation(.spring(response: 0.3), value: viewModel.prefetchStatusMessage)
                 }
 
-                // Playlist indicator (shows when playlist detected)
-                if viewModel.isPlaylistDetected || viewModel.isFetchingPlaylist {
+                // F1: Estimated file size
+                if !viewModel.isBatchMode, let fileSize = viewModel.estimatedFileSize {
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                        .foregroundStyle(.secondary)
+                }
+
+                // Playlist indicator - hidden in batch mode
+                if !viewModel.isBatchMode && (viewModel.isPlaylistDetected || viewModel.isFetchingPlaylist) {
                     HStack(spacing: 6) {
                         if viewModel.isFetchingPlaylist {
                             ProgressView()
                                 .scaleEffect(0.6)
-                            Text("Loading playlist...")
+                            Text("Playlist laden...")
                                 .font(.system(size: 12, weight: .medium))
                         } else {
                             Image(systemName: "list.bullet.circle.fill")
@@ -340,7 +429,6 @@ struct MainView: View {
                            let urlString = plist["URL"] as? String {
                             DispatchQueue.main.async {
                                 self.viewModel.urlInput = urlString
-                                self.viewModel.startDownload()
                             }
                         }
                     }
@@ -355,12 +443,10 @@ struct MainView: View {
                        let url = URL(dataRepresentation: data, relativeTo: nil) {
                         DispatchQueue.main.async {
                             self.viewModel.urlInput = url.absoluteString
-                            self.viewModel.startDownload()
                         }
                     } else if let url = item as? URL {
                         DispatchQueue.main.async {
                             self.viewModel.urlInput = url.absoluteString
-                            self.viewModel.startDownload()
                         }
                     }
                 }
@@ -375,7 +461,6 @@ struct MainView: View {
                         if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
                             DispatchQueue.main.async {
                                 self.viewModel.urlInput = trimmed
-                                self.viewModel.startDownload()
                             }
                         }
                     }
@@ -475,7 +560,7 @@ struct MainView: View {
         }
         .frame(maxHeight: .infinity)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .accessibilityLabel("Downloads list")
+        .accessibilityLabel("Download-Liste")
     }
 
     private var emptyStateView: some View {
@@ -490,17 +575,17 @@ struct MainView: View {
                 .accessibilityHidden(true)
 
             VStack(spacing: 4) {
-                Text("No downloads yet")
+                Text("Noch keine Downloads")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(.secondary)
-                Text("Paste a URL above to get started")
+                Text("Füge oben eine URL ein, um zu starten")
                     .font(.system(size: 13))
                     .foregroundStyle(.tertiary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("No downloads yet. Paste a URL above to get started.")
+        .accessibilityLabel("Noch keine Downloads. Füge oben eine URL ein, um zu starten.")
     }
 }
 
@@ -535,12 +620,12 @@ struct PlaylistDownloadDialog: View {
 
         var label: String {
             switch self {
-            case .singleVideo: return "Just this video"
-            case .first10: return "First 10 videos"
-            case .first25: return "First 25 videos"
-            case .first50: return "First 50 videos"
-            case .first100: return "First 100 videos"
-            case .all: return "All videos"
+            case .singleVideo: return "Nur dieses Video"
+            case .first10: return "Erste 10 Videos"
+            case .first25: return "Erste 25 Videos"
+            case .first50: return "Erste 50 Videos"
+            case .first100: return "Erste 100 Videos"
+            case .all: return "Alle Videos"
             }
         }
 
@@ -564,7 +649,7 @@ struct PlaylistDownloadDialog: View {
                         endPoint: .bottomTrailing
                     ))
 
-                Text("Playlist Detected")
+                Text("Playlist erkannt")
                     .font(.system(size: 18, weight: .semibold))
 
                 if let info = playlistInfo {
@@ -576,7 +661,7 @@ struct PlaylistDownloadDialog: View {
                                 .multilineTextAlignment(.center)
                                 .foregroundStyle(.secondary)
                         }
-                        Text("\(info.videoCount) videos in playlist")
+                        Text("\(info.videoCount) Videos in der Playlist")
                             .font(.system(size: 13))
                             .foregroundStyle(.tertiary)
                     }
@@ -585,7 +670,7 @@ struct PlaylistDownloadDialog: View {
 
             // Options
             VStack(spacing: 10) {
-                Text("What would you like to download?")
+                Text("Was möchtest du herunterladen?")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
 
@@ -610,7 +695,7 @@ struct PlaylistDownloadDialog: View {
             // Buttons
             HStack(spacing: 12) {
                 Button(action: onCancel) {
-                    Text("Cancel")
+                    Text("Abbrechen")
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
                 }
@@ -626,7 +711,7 @@ struct PlaylistDownloadDialog: View {
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.down.circle.fill")
-                        Text("Download")
+                        Text("Herunterladen")
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
@@ -673,7 +758,7 @@ struct PlaylistDownloadDialog: View {
                 Spacer()
 
                 if let limit = option.limit, limit > 1, let count = playlistInfo?.videoCount, limit > count {
-                    Text("(\(count) available)")
+                    Text("(\(count) verfügbar)")
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                 }
@@ -806,7 +891,7 @@ struct VideoFormatPicker: View {
         .padding(4)
         .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Video quality")
+        .accessibilityLabel("Videoqualität")
     }
 }
 
@@ -841,7 +926,7 @@ struct AudioFormatPicker: View {
         .padding(4)
         .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Audio format")
+        .accessibilityLabel("Audioformat")
     }
 }
 
@@ -880,7 +965,7 @@ struct DynamicQualityPicker: View {
         }
         .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Video quality")
+        .accessibilityLabel("Videoqualität")
     }
 }
 
@@ -1011,7 +1096,7 @@ struct DownloadRowView: View {
             thumbnailView
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(item.title ?? "Loading...")
+                Text(item.title ?? "Laden...")
                     .font(.system(size: 14, weight: .medium))
                     .lineLimit(2)
                     .foregroundStyle(.primary)
@@ -1021,7 +1106,7 @@ struct DownloadRowView: View {
                         Label(uploader, systemImage: "person.fill")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
-                            .accessibilityLabel("Uploader: \(uploader)")
+                            .accessibilityLabel("Hochgeladen von: \(uploader)")
                     }
                     if let duration = item.duration {
                         Text(duration)
@@ -1030,7 +1115,7 @@ struct DownloadRowView: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(Color.secondary.opacity(0.15), in: Capsule())
-                            .accessibilityLabel("Duration: \(duration)")
+                            .accessibilityLabel("Dauer: \(duration)")
                     }
                 }
 
@@ -1061,11 +1146,11 @@ struct DownloadRowView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityDescription)
-        .accessibilityHint(isCompleted ? "Click to show in Finder" : "")
+        .accessibilityHint(isCompleted ? "Klicken um im Finder zu zeigen" : "")
     }
 
     private var accessibilityDescription: String {
-        let title = item.title ?? "Loading"
+        let title = item.title ?? "Laden..."
         let status = item.status.displayText
         return "\(title), \(status)"
     }
@@ -1082,8 +1167,8 @@ struct DownloadRowView: View {
                         .foregroundStyle(.orange)
                 }
                 .buttonStyle(.plain)
-                .help("Pause download")
-                .accessibilityLabel("Pause")
+                .help("Download pausieren")
+                .accessibilityLabel("Pausieren")
             } else if item.status.canRetry {
                 Button(action: item.status.isPaused ? onResume : onRetry) {
                     Image(systemName: item.status.isPaused ? "play.circle.fill" : "arrow.clockwise.circle.fill")
@@ -1092,8 +1177,8 @@ struct DownloadRowView: View {
                         .foregroundStyle(item.status.isPaused ? .green : .blue)
                 }
                 .buttonStyle(.plain)
-                .help(item.status.isPaused ? "Resume download" : "Retry download")
-                .accessibilityLabel(item.status.isPaused ? "Resume" : "Retry")
+                .help(item.status.isPaused ? "Download fortsetzen" : "Erneut versuchen")
+                .accessibilityLabel(item.status.isPaused ? "Fortsetzen" : "Wiederholen")
             }
 
             // Cancel button for active downloads
@@ -1105,8 +1190,8 @@ struct DownloadRowView: View {
                         .foregroundStyle(.red)
                 }
                 .buttonStyle(.plain)
-                .help("Cancel download")
-                .accessibilityLabel("Cancel")
+                .help("Download abbrechen")
+                .accessibilityLabel("Abbrechen")
             }
 
             // Move buttons (only show when hovering and not downloading)
@@ -1119,7 +1204,7 @@ struct DownloadRowView: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Move up")
+                    .help("Nach oben")
                 }
 
                 if canMoveDown, let moveDown = onMoveDown {
@@ -1130,7 +1215,7 @@ struct DownloadRowView: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Move down")
+                    .help("Nach unten")
                 }
             }
 
@@ -1143,8 +1228,8 @@ struct DownloadRowView: View {
             }
             .buttonStyle(.plain)
             .opacity(isHovering ? 1 : 0.5)
-            .help("Remove from list")
-            .accessibilityLabel("Remove")
+            .help("Aus Liste entfernen")
+            .accessibilityLabel("Entfernen")
         }
     }
 
@@ -1197,7 +1282,7 @@ struct DownloadRowView: View {
             case .downloading(let progress):
                 progressBar(progress: progress)
                 HStack(spacing: 6) {
-                    Text(String(format: "%3d%%", Int(progress * 100)))
+                    Text(String(format: "%3d%%", min(100, max(0, Int(progress * 100)))))
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .frame(width: 36, alignment: .trailing)
@@ -1211,13 +1296,26 @@ struct DownloadRowView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     }
+                    // F1: Show estimated file size during download
+                    if let fileSize = item.estimatedFileSize {
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             case .paused(let progress):
                 progressBar(progress: progress)
-                Text(String(format: "%3d%%", Int(progress * 100)))
+                Text(String(format: "%3d%%", min(100, max(0, Int(progress * 100)))))
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .frame(width: 40, alignment: .trailing)
+            case .failed:
+                // F2: Show error with tooltip for raw error detail
+                Text(item.status.displayText)
+                    .font(.system(size: 12))
+                    .foregroundStyle(statusColor)
+                    .lineLimit(1)
+                    .help(item.errorDetail ?? "")
             default:
                 Text(item.status.displayText)
                     .font(.system(size: 12))
@@ -1225,7 +1323,7 @@ struct DownloadRowView: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Status: \(item.status.displayText)")
+        .accessibilityLabel(item.status.displayText)
     }
 
     private func progressBar(progress: Double) -> some View {

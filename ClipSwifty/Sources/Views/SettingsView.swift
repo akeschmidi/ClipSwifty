@@ -21,7 +21,7 @@ struct SettingsView: View {
             Section {
                 // Output Directory
                 HStack {
-                    Text("Save downloads to:")
+                    Text("Downloads speichern in:")
                     Spacer()
                     Button(action: selectOutputDirectory) {
                         HStack(spacing: 4) {
@@ -35,10 +35,10 @@ struct SettingsView: View {
 
                 // Rate Limit
                 HStack {
-                    Text("Download speed limit:")
+                    Text("Geschwindigkeitslimit:")
                     Spacer()
                     Picker("", selection: $settings.downloadRateLimit) {
-                        Text("Unlimited").tag(0)
+                        Text("Unbegrenzt").tag(0)
                         Text("500 KB/s").tag(500)
                         Text("1 MB/s").tag(1000)
                         Text("2 MB/s").tag(2000)
@@ -51,14 +51,14 @@ struct SettingsView: View {
 
                 // Concurrent fragments
                 HStack {
-                    Text("Parallel connections:")
+                    Text("Parallele Verbindungen:")
                     Spacer()
                     Picker("", selection: $settings.concurrentFragments) {
-                        Text("1 (Slow)").tag(1)
+                        Text("1 (Langsam)").tag(1)
                         Text("2").tag(2)
-                        Text("4 (Default)").tag(4)
+                        Text("4 (Standard)").tag(4)
                         Text("6").tag(6)
-                        Text("8 (Fast)").tag(8)
+                        Text("8 (Schnell)").tag(8)
                     }
                     .pickerStyle(.menu)
                     .frame(width: 120)
@@ -66,54 +66,54 @@ struct SettingsView: View {
             } header: {
                 Label("Downloads", systemImage: "arrow.down.circle")
             } footer: {
-                Text("More parallel connections = faster downloads, but may cause issues on slow connections.")
+                Text("Mehr parallele Verbindungen = schnellere Downloads, kann aber bei langsamen Verbindungen Probleme verursachen.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             // Format Preferences
             Section {
-                Picker("Preferred video format:", selection: $settings.preferredVideoFormat) {
+                Picker("Bevorzugtes Videoformat:", selection: $settings.preferredVideoFormat) {
                     ForEach(VideoFormat.allCases) { format in
                         Text(format.displayName).tag(format.rawValue)
                     }
                 }
 
-                Picker("Preferred audio format:", selection: $settings.preferredAudioFormat) {
+                Picker("Bevorzugtes Audioformat:", selection: $settings.preferredAudioFormat) {
                     ForEach(AudioFormat.allCases) { format in
                         Text(format.displayName).tag(format.rawValue)
                     }
                 }
 
-                Toggle("Embed chapters in videos", isOn: $settings.embedChapters)
+                Toggle("Kapitel in Videos einbetten", isOn: $settings.embedChapters)
 
-                Toggle("Save thumbnail as image", isOn: $settings.saveThumbnail)
+                Toggle("Vorschaubild als Bild speichern", isOn: $settings.saveThumbnail)
 
-                Toggle("Download subtitles", isOn: $settings.downloadSubtitles)
+                Toggle("Untertitel herunterladen", isOn: $settings.downloadSubtitles)
             } header: {
-                Label("Formats", systemImage: "film")
+                Label("Formate", systemImage: "film")
             } footer: {
-                Text("Chapters are embedded in MP4 files when available. Subtitles are saved as .srt files.")
+                Text("Kapitel werden in MP4-Dateien eingebettet, wenn verfügbar. Untertitel werden als .srt-Dateien gespeichert.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             // Notifications & Clipboard
             Section {
-                Toggle("Notify when download completes", isOn: $settings.notificationsEnabled)
+                Toggle("Benachrichtigung bei Download-Abschluss", isOn: $settings.notificationsEnabled)
 
-                Toggle("Clipboard monitoring", isOn: $settings.clipboardMonitoring)
+                Toggle("Zwischenablage überwachen", isOn: $settings.clipboardMonitoring)
             } header: {
-                Label("Notifications", systemImage: "bell")
+                Label("Benachrichtigungen", systemImage: "bell")
             } footer: {
-                Text("Clipboard monitoring shows a popup when you copy a video URL.")
+                Text("Die Zwischenablage-Überwachung zeigt ein Popup, wenn du eine Video-URL kopierst.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             // Auto-Organization
             Section {
-                Picker("Organize downloads:", selection: $settings.organizationPattern) {
+                Picker("Downloads organisieren:", selection: $settings.organizationPattern) {
                     ForEach(OrganizationPattern.allCases) { pattern in
                         Text(pattern.displayName).tag(pattern)
                     }
@@ -121,7 +121,7 @@ struct SettingsView: View {
 
                 if settings.organizationPattern != .none {
                     HStack {
-                        Text("Preview:")
+                        Text("Vorschau:")
                             .foregroundStyle(.secondary)
                         Spacer()
                         Text(settings.organizationPattern.previewExample)
@@ -130,9 +130,9 @@ struct SettingsView: View {
                     }
                 }
             } header: {
-                Label("Organization", systemImage: "folder.badge.gearshape")
+                Label("Organisation", systemImage: "folder.badge.gearshape")
             } footer: {
-                Text("Automatically organize downloads into subfolders based on channel, date, or playlist.")
+                Text("Downloads automatisch in Unterordner nach Kanal, Datum oder Playlist organisieren.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -162,7 +162,7 @@ struct SettingsView: View {
                         }
 
                         if let lastUpdate = settings.lastYtDlpUpdate {
-                            Text("Last updated: \(lastUpdate, style: .relative) ago")
+                            Text("Letztes Update: vor \(lastUpdate, style: .relative)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -177,14 +177,14 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else if updateManager.updateAvailable {
-                        Button("Update Now") {
+                        Button("Jetzt aktualisieren") {
                             Task {
                                 await updateManager.performUpdate()
                             }
                         }
                         .buttonStyle(.borderedProminent)
                     } else {
-                        Button("Check for Updates") {
+                        Button("Nach Updates suchen") {
                             updateManager.checkForUpdatesInBackground()
                         }
                     }
@@ -192,11 +192,11 @@ struct SettingsView: View {
 
                 // Force reinstall option
                 HStack {
-                    Text("Having issues?")
+                    Text("Probleme?")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Reinstall yt-dlp") {
+                    Button("yt-dlp neu installieren") {
                         Task {
                             await updateManager.forceReinstall()
                         }
@@ -207,7 +207,7 @@ struct SettingsView: View {
             } header: {
                 Label("yt-dlp", systemImage: "terminal")
             } footer: {
-                Text("yt-dlp is required for downloading videos. Keep it updated for best compatibility with video platforms.")
+                Text("yt-dlp wird zum Herunterladen von Videos benötigt. Halte es aktuell für beste Kompatibilität.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -221,21 +221,23 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Link(destination: URL(string: "https://github.com/yt-dlp/yt-dlp")!) {
-                    HStack {
-                        Text("yt-dlp on GitHub")
-                        Spacer()
-                        Image(systemName: "arrow.up.right.square")
-                            .foregroundStyle(.secondary)
+                if let ytdlpURL = URL(string: "https://github.com/yt-dlp/yt-dlp") {
+                    Link(destination: ytdlpURL) {
+                        HStack {
+                            Text("yt-dlp auf GitHub")
+                            Spacer()
+                            Image(systemName: "arrow.up.right.square")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             } header: {
-                Label("About", systemImage: "info.circle")
+                Label("Über", systemImage: "info.circle")
             }
 
             // Support
             Section {
-                Link(destination: URL(string: "https://buymeacoffee.com/akeschmidii")!) {
+                Link(destination: URL(string: "https://buymeacoffee.com/akeschmidii") ?? URL(fileURLWithPath: "/")) {
                     HStack(spacing: 12) {
                         Text("☕")
                             .font(.system(size: 24))
@@ -243,7 +245,7 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Buy me a coffee")
                                 .font(.system(size: 14, weight: .medium))
-                            Text("Support the development")
+                            Text("Unterstütze die Entwicklung")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }
@@ -257,20 +259,20 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
 
-                Link(destination: URL(string: "https://github.com/akeschmidi/ClipSwifty")!) {
+                Link(destination: URL(string: "https://github.com/akeschmidi/ClipSwifty") ?? URL(fileURLWithPath: "/")) {
                     HStack {
                         Image(systemName: "star.fill")
                             .foregroundStyle(.yellow)
-                        Text("Star on GitHub")
+                        Text("Stern auf GitHub")
                         Spacer()
                         Image(systemName: "arrow.up.right.square")
                             .foregroundStyle(.secondary)
                     }
                 }
             } header: {
-                Label("Support", systemImage: "heart")
+                Label("Unterstützung", systemImage: "heart")
             } footer: {
-                Text("ClipSwifty is free and open source. Your support helps keep it that way!")
+                Text("ClipSwifty ist kostenlos und Open Source. Deine Unterstützung hilft, dass es so bleibt!")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -285,7 +287,7 @@ struct SettingsView: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        panel.prompt = "Select"
+        panel.prompt = "Auswählen"
 
         if panel.runModal() == .OK, let url = panel.url {
             settings.outputDirectory = url

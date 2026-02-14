@@ -27,6 +27,24 @@ final class DownloadViewModel: ObservableObject {
     @Published var availableQualities: [AvailableQuality] = []
     @Published var selectedQuality: AvailableQuality?
 
+    // F1: Estimated file size for pre-download display
+    @Published var estimatedFileSize: Int?
+
+    // F4: History & duplicate detection
+    @Published var showDuplicateWarning: Bool = false
+    @Published var duplicateHistoryItem: DownloadHistoryItem?
+    @Published var showHistory: Bool = false
+    private let historyManager = DownloadHistoryManager.shared
+    private var pendingDuplicateURL: String?
+
+    // F3: Batch mode
+    var detectedURLs: [String] {
+        urlInput.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.hasPrefix("http://") || $0.hasPrefix("https://") }
+    }
+    var isBatchMode: Bool { detectedURLs.count > 1 }
+
     // Clipboard monitoring
     @Published var clipboardDetectedURL: String?
     @Published var showClipboardPopup: Bool = false
@@ -84,10 +102,23 @@ final class DownloadViewModel: ObservableObject {
     private var saveTask: Task<Void, Never>?
     private var lastSaveTime: Date = .distantPast
 
-    // Prefetch cache for video info
+    // Prefetch cache for video info (max 20 entries to bound memory)
     private var prefetchCache: [String: VideoInfo] = [:]
+    private var prefetchCacheOrder: [String] = []
+    private let maxPrefetchCacheSize = 20
     private var prefetchTask: Task<Void, Never>?
     private var lastPrefetchURL: String = ""
+
+    /// Insert into prefetch cache with LRU eviction
+    private func cachePrefetch(url: String, info: VideoInfo) {
+        prefetchCache[url] = info
+        prefetchCacheOrder.removeAll { $0 == url }
+        prefetchCacheOrder.append(url)
+        while prefetchCacheOrder.count > maxPrefetchCacheSize {
+            let oldest = prefetchCacheOrder.removeFirst()
+            prefetchCache.removeValue(forKey: oldest)
+        }
+    }
 
     // Throttled save - only save every 2 seconds max during downloads
     private func scheduleSave(immediate: Bool = false) {
@@ -107,15 +138,18 @@ final class DownloadViewModel: ObservableObject {
     }
 
     private var dataFileURL: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/ClipSwifty/downloads.json")
+        }
         let appFolder = appSupport.appendingPathComponent("ClipSwifty")
         try? FileManager.default.createDirectory(at: appFolder, withIntermediateDirectories: true)
         return appFolder.appendingPathComponent("downloads.json")
     }
 
     init() {
-        self.outputDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
-        self.selectedPreset = AppSettings.shared.selectedPreset
+        self.outputDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
+        self.selectedPreset = .custom
         loadDownloads()
         requestNotificationPermission()
         startClipboardMonitoring()
@@ -149,8 +183,8 @@ final class DownloadViewModel: ObservableObject {
         clipboardMonitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 500_000_000) // Check every 0.5s
-                guard !Task.isCancelled else { break }
-                await self?.checkClipboard()
+                guard !Task.isCancelled, let self = self else { break }
+                self.checkClipboard()
             }
         }
     }
@@ -238,13 +272,13 @@ final class DownloadViewModel: ObservableObject {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let loaded = try decoder.decode([DownloadItem].self, from: data)
-            // Reset any in-progress downloads to paused state
+            // Reset any in-progress downloads to safe states after restart
             self.downloads = loaded.map { item in
                 var mutableItem = item
                 switch item.status {
                 case .downloading(let progress):
                     mutableItem.status = .paused(progress: progress)
-                case .fetchingInfo:
+                case .fetchingInfo, .preparing:
                     mutableItem.status = .pending
                 case .converting:
                     mutableItem.status = .paused(progress: 0.99)
@@ -263,9 +297,8 @@ final class DownloadViewModel: ObservableObject {
         do {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
-            encoder.outputFormatting = .prettyPrinted
             let data = try encoder.encode(downloads)
-            try data.write(to: dataFileURL)
+            try data.write(to: dataFileURL, options: [.atomic])
         } catch {
             logger.error("Failed to save downloads: \(error.localizedDescription)")
         }
@@ -290,13 +323,14 @@ final class DownloadViewModel: ObservableObject {
         let url = urlInput.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Clear indicator if URL is empty or invalid
-        if url.isEmpty || isPlaylistDetected || !isValidVideoURL(url) {
+        if url.isEmpty || isPlaylistDetected || !isValidVideoURL(url) || isBatchMode {
             prefetchTask?.cancel()
             prefetchTask = nil
             isPrefetching = false
             prefetchedTitle = nil
             availableQualities = []
             selectedQuality = nil
+            estimatedFileSize = nil
             lastPrefetchURL = ""
             return
         }
@@ -318,6 +352,11 @@ final class DownloadViewModel: ObservableObject {
             if let first = availableQualities.first {
                 selectedQuality = first  // Default to best quality
             }
+            // F1: Calculate estimated file size
+            estimatedFileSize = cached.estimatedFileSize(
+                forMaxHeight: selectedQuality?.height,
+                isAudioOnly: isAudioOnly
+            )
             logger.info("⏱️ [PREFETCH] Cache hit for: \(url)")
             return
         }
@@ -342,12 +381,17 @@ final class DownloadViewModel: ObservableObject {
                 }
 
                 // Cache the result
-                prefetchCache[url] = info
+                cachePrefetch(url: url, info: info)
                 prefetchedTitle = info.title
                 availableQualities = info.availableQualities
                 if let first = availableQualities.first {
                     selectedQuality = first  // Default to best quality
                 }
+                // F1: Calculate estimated file size
+                estimatedFileSize = info.estimatedFileSize(
+                    forMaxHeight: selectedQuality?.height,
+                    isAudioOnly: isAudioOnly
+                )
 
                 let elapsed = Int(Date().timeIntervalSince(startTime) * 1000)
                 let qualityCount = self.availableQualities.count
@@ -401,18 +445,60 @@ final class DownloadViewModel: ObservableObject {
 
     // MARK: - Public Actions
 
+    /// Recalculate estimated file size when quality or audio mode changes
+    func recalculateFileSize() {
+        let url = urlInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let cached = prefetchCache[url] else {
+            estimatedFileSize = nil
+            return
+        }
+        estimatedFileSize = cached.estimatedFileSize(
+            forMaxHeight: selectedQuality?.height,
+            isAudioOnly: isAudioOnly
+        )
+    }
+
+    /// F4: Confirm duplicate download after user accepts warning
+    func confirmDuplicateDownload() {
+        showDuplicateWarning = false
+        guard let url = pendingDuplicateURL else { return }
+        pendingDuplicateURL = nil
+        startSingleDownload(url: url)
+    }
+
+    /// F4: Cancel duplicate download
+    func cancelDuplicateDownload() {
+        showDuplicateWarning = false
+        pendingDuplicateURL = nil
+        duplicateHistoryItem = nil
+    }
+
     func startDownload() {
         let startTime = Date()
         logger.info("⏱️ [START] startDownload triggered")
 
         guard !urlInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            errorMessage = "Please enter a URL"
+            errorMessage = "Bitte eine URL eingeben"
+            return
+        }
+
+        // F3: Batch mode
+        if isBatchMode {
+            startBatchDownload()
             return
         }
 
         let url = urlInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let isPlaylist = isPlaylistDetected
         logger.info("⏱️ [INFO] URL: \(url), isPlaylistDetected: \(isPlaylist)")
+
+        // F4: Duplicate check
+        if let existing = historyManager.isDuplicate(url: url) {
+            duplicateHistoryItem = existing
+            pendingDuplicateURL = url
+            showDuplicateWarning = true
+            return
+        }
 
         // If playlist detected, always show dialog to let user choose
         if isPlaylistDetected {
@@ -424,10 +510,14 @@ final class DownloadViewModel: ObservableObject {
             return
         }
 
+        startSingleDownload(url: url)
+        logger.info("⏱️ [TIMING] startDownload setup completed in \(Int(Date().timeIntervalSince(startTime) * 1000))ms")
+    }
+
+    private func startSingleDownload(url: String) {
         // Single video download - start immediately with downloading status
         // Generate thumbnail URL immediately (no network request needed for YouTube)
         let thumbnailURL = extractThumbnailURL(from: url)
-        logger.info("⏱️ [TIMING] thumbnailURL generated in \(Int(Date().timeIntervalSince(startTime) * 1000))ms")
 
         // Use prefetched info if available
         let cachedInfo = prefetchCache[url]
@@ -444,6 +534,18 @@ final class DownloadViewModel: ObservableObject {
             logger.info("⏱️ [PREFETCH] Using cached info for download: \(prefetchedVideoTitle ?? "unknown"), quality: \(qualityLabel)")
         }
 
+        // F1: Estimated file size
+        let estSize = cachedInfo?.estimatedFileSize(
+            forMaxHeight: selectedQuality?.height,
+            isAudioOnly: isAudioOnly
+        )
+
+        // Check disk space before starting download
+        if let spaceError = checkDiskSpace(estimatedBytes: estSize) {
+            errorMessage = spaceError
+            return
+        }
+
         let item = DownloadItem(
             url: url,
             title: prefetchedVideoTitle,
@@ -454,7 +556,8 @@ final class DownloadViewModel: ObservableObject {
             isAudioOnly: isAudioOnly,
             videoFormat: formatSelector,
             audioFormat: selectedAudioFormat.rawValue,
-            isPlaylist: false
+            isPlaylist: false,
+            estimatedFileSize: estSize
         )
         downloads.insert(item, at: 0)
         scheduleSave(immediate: true)
@@ -466,6 +569,7 @@ final class DownloadViewModel: ObservableObject {
         prefetchedTitle = nil
         availableQualities = []
         selectedQuality = nil
+        estimatedFileSize = nil
         prefetchCache.removeValue(forKey: url)
 
         logger.info("⏱️ [INFO] Item added to downloads, starting processDownload task...")
@@ -473,9 +577,46 @@ final class DownloadViewModel: ObservableObject {
             await processDownload(itemId: item.id, url: url)
         }
 
-        logger.info("⏱️ [TIMING] startDownload setup completed in \(Int(Date().timeIntervalSince(startTime) * 1000))ms")
         urlInput = ""
         downloadFullPlaylist = false
+    }
+
+    // F3: Batch download
+    private func startBatchDownload() {
+        let urls = detectedURLs
+        logger.info("⏱️ [BATCH] Starting batch download for \(urls.count) URLs")
+
+        var items: [DownloadItem] = []
+        for (index, url) in urls.enumerated() {
+            let thumbnailURL = extractThumbnailURL(from: url)
+            let item = DownloadItem(
+                url: url,
+                thumbnailURL: thumbnailURL,
+                status: index == 0 ? .downloading(progress: 0) : .pending,
+                isAudioOnly: isAudioOnly,
+                videoFormat: selectedQuality?.formatSelector ?? selectedVideoFormat.rawValue,
+                audioFormat: selectedAudioFormat.rawValue,
+                isPlaylist: false
+            )
+            items.append(item)
+            downloads.insert(item, at: downloads.count)
+        }
+
+        scheduleSave(immediate: true)
+
+        // Clear input
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        isPrefetching = false
+        prefetchedTitle = nil
+        availableQualities = []
+        selectedQuality = nil
+        estimatedFileSize = nil
+        urlInput = ""
+
+        Task {
+            await downloadPlaylistParallel(items: items)
+        }
     }
 
     private func fetchPlaylistInfo(url: String) async {
@@ -500,7 +641,8 @@ final class DownloadViewModel: ObservableObject {
 
             guard output.exitCode == 0 else {
                 isFetchingPlaylist = false
-                errorMessage = "Failed to fetch playlist: \(output.stderr)"
+                let mapped = ErrorMapper.map(stderr: output.stderr)
+                errorMessage = mapped.userMessage
                 return
             }
 
@@ -508,7 +650,7 @@ final class DownloadViewModel: ObservableObject {
             guard let data = output.stdout.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 isFetchingPlaylist = false
-                errorMessage = "Failed to parse playlist data"
+                errorMessage = "Playlist-Daten konnten nicht verarbeitet werden"
                 return
             }
 
@@ -544,7 +686,7 @@ final class DownloadViewModel: ObservableObject {
 
         } catch {
             isFetchingPlaylist = false
-            errorMessage = "Playlist error: \(error.localizedDescription)"
+            errorMessage = "Playlist-Fehler: \(error.localizedDescription)"
         }
     }
 
@@ -625,11 +767,11 @@ final class DownloadViewModel: ObservableObject {
 
         logger.info("Prefetching info for \(itemsNeedingInfo.count) playlist items")
 
-        // Fetch info for up to 10 items concurrently
+        // Fetch info for up to 4 items concurrently
         await withTaskGroup(of: Void.self) { group in
             var pending = itemsNeedingInfo.makeIterator()
             var activeCount = 0
-            let maxConcurrent = 10
+            let maxConcurrent = 4
 
             while activeCount < maxConcurrent, let item = pending.next() {
                 activeCount += 1
@@ -712,13 +854,15 @@ final class DownloadViewModel: ObservableObject {
 
         logger.info("Retrying download: \(item.id)")
         downloads[idx].status = .pending
+        downloads[idx].retryCount = 0  // F5: Reset retry count on manual retry
+        let updatedItem = downloads[idx]  // Capture value copy before async
 
         Task {
             // If we have video info, skip fetching
-            if item.title != nil {
-                await performDownload(itemId: item.id, url: item.url, item: item)
+            if updatedItem.title != nil {
+                await performDownload(itemId: updatedItem.id, url: updatedItem.url, item: updatedItem)
             } else {
-                await processDownload(itemId: item.id, url: item.url)
+                await processDownload(itemId: updatedItem.id, url: updatedItem.url)
             }
         }
     }
@@ -752,7 +896,7 @@ final class DownloadViewModel: ObservableObject {
 
         logger.info("Cancelling download: \(item.id)")
         ytDlpManager.cancelDownload(id: item.id)
-        downloads[idx].status = .failed(message: "Cancelled")
+        downloads[idx].status = .failed(message: "Abgebrochen")
         scheduleSave(immediate: true)
     }
 
@@ -762,7 +906,7 @@ final class DownloadViewModel: ObservableObject {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        panel.prompt = "Select"
+        panel.prompt = "Auswählen"
 
         if panel.runModal() == .OK, let url = panel.url {
             outputDirectory = url
@@ -850,11 +994,41 @@ final class DownloadViewModel: ObservableObject {
 
     // MARK: - Private Methods
 
+    private func checkDiskSpace(estimatedBytes: Int?) -> String? {
+        guard let estimatedBytes = estimatedBytes, estimatedBytes > 0 else {
+            return nil // No estimate available, proceed optimistically
+        }
+
+        do {
+            let attrs = try FileManager.default.attributesOfFileSystem(forPath: outputDirectory.path)
+            guard let freeSpace = attrs[.systemFreeSize] as? Int64 else { return nil }
+
+            let requiredSpace = Int64(Double(estimatedBytes) * 1.5)
+            if freeSpace < requiredSpace {
+                let freeFormatted = ByteCountFormatter.string(fromByteCount: freeSpace, countStyle: .file)
+                let neededFormatted = ByteCountFormatter.string(fromByteCount: Int64(estimatedBytes), countStyle: .file)
+                return "Nicht genügend Speicherplatz. Frei: \(freeFormatted), benötigt: ca. \(neededFormatted)"
+            }
+        } catch {
+            logger.warning("Could not check disk space: \(error.localizedDescription)")
+        }
+
+        return nil
+    }
+
+    /// Safely mutate a download item by ID. Returns false if item no longer exists.
+    @discardableResult
+    private func updateDownload(_ itemId: UUID, _ mutation: (inout DownloadItem) -> Void) -> Bool {
+        guard let idx = downloads.firstIndex(where: { $0.id == itemId }) else { return false }
+        mutation(&downloads[idx])
+        return true
+    }
+
     private func processDownload(itemId: UUID, url: String) async {
         let startTime = Date()
         logger.info("⏱️ [START] processDownload for \(itemId)")
 
-        guard let idx = downloads.firstIndex(where: { $0.id == itemId }) else {
+        guard downloads.firstIndex(where: { $0.id == itemId }) != nil else {
             logger.warning("⏱️ [ABORT] Item not found: \(itemId)")
             return
         }
@@ -863,6 +1037,12 @@ final class DownloadViewModel: ObservableObject {
             let setupStart = Date()
             try await ytDlpManager.setup()
             logger.info("⏱️ [TIMING] setup took \(Int(Date().timeIntervalSince(setupStart) * 1000))ms")
+
+            // Re-lookup index after await - user may have deleted items during setup
+            guard let idx = downloads.firstIndex(where: { $0.id == itemId }) else {
+                logger.warning("⏱️ [ABORT] Item removed during setup: \(itemId)")
+                return
+            }
 
             // Generate thumbnail immediately if not present (no network request)
             if downloads[idx].thumbnailURL == nil, let thumbURL = extractThumbnailURL(from: url) {
@@ -907,12 +1087,10 @@ final class DownloadViewModel: ObservableObject {
         let startTime = Date()
         logger.info("⏱️ [START] performDownload for \(itemId)")
 
-        guard let index = downloads.firstIndex(where: { $0.id == itemId }) else {
+        guard updateDownload(itemId, { $0.status = .preparing(status: "Verbinde...") }) else {
             logger.warning("⏱️ [ABORT] performDownload - item not found")
             return
         }
-
-        downloads[index].status = .preparing(status: "Connecting...")
 
         let buildArgsStart = Date()
         var arguments = buildArguments(for: url, item: item)
@@ -931,17 +1109,15 @@ final class DownloadViewModel: ObservableObject {
                 if let line = outputLine {
                     // Update preparation status based on yt-dlp output
                     Task { @MainActor in
-                        guard let self = self,
-                              let idx = self.downloads.firstIndex(where: { $0.id == itemId }) else { return }
-
-                        // Only update if still in preparing state
-                        if case .preparing = self.downloads[idx].status {
+                        guard let self = self else { return }
+                        self.updateDownload(itemId) { item in
+                            guard case .preparing = item.status else { return }
                             if line.contains("[youtube]") && line.contains("Extracting") {
-                                self.downloads[idx].status = .preparing(status: "Extracting video info...")
+                                item.status = .preparing(status: "Video-Infos laden...")
                             } else if line.contains("[info]") {
-                                self.downloads[idx].status = .preparing(status: "Getting formats...")
+                                item.status = .preparing(status: "Formate abrufen...")
                             } else if line.contains("[download] Destination") {
-                                self.downloads[idx].status = .preparing(status: "Starting download...")
+                                item.status = .preparing(status: "Download startet...")
                             }
                         }
                     }
@@ -960,10 +1136,11 @@ final class DownloadViewModel: ObservableObject {
                                     if !title.isEmpty {
                                         extractedTitle = title
                                         Task { @MainActor in
-                                            guard let self = self,
-                                                  let idx = self.downloads.firstIndex(where: { $0.id == itemId }),
-                                                  self.downloads[idx].title == nil else { return }
-                                            self.downloads[idx].title = title
+                                            guard let self = self else { return }
+                                            self.updateDownload(itemId) { item in
+                                                guard item.title == nil else { return }
+                                                item.title = title
+                                            }
                                             logger.info("⏱️ [INFO] Extracted title: \(title)")
                                         }
                                     }
@@ -1001,13 +1178,10 @@ final class DownloadViewModel: ObservableObject {
 
                         if extractedSpeed != nil || extractedEta != nil {
                             Task { @MainActor in
-                                guard let self = self,
-                                      let idx = self.downloads.firstIndex(where: { $0.id == itemId }) else { return }
-                                if let speed = extractedSpeed {
-                                    self.downloads[idx].downloadSpeed = speed
-                                }
-                                if let eta = extractedEta {
-                                    self.downloads[idx].eta = eta
+                                guard let self = self else { return }
+                                self.updateDownload(itemId) { item in
+                                    if let speed = extractedSpeed { item.downloadSpeed = speed }
+                                    if let eta = extractedEta { item.eta = eta }
                                 }
                             }
                         }
@@ -1027,26 +1201,26 @@ final class DownloadViewModel: ObservableObject {
                     }
 
                     Task { @MainActor in
-                        guard let self = self,
-                              let idx = self.downloads.firstIndex(where: { $0.id == itemId }) else { return }
-
-                        // Get current progress to prevent jumping backwards (video+audio have multiple phases)
-                        let currentProgress: Double
-                        if case .downloading(let p) = self.downloads[idx].status {
-                            currentProgress = p
-                        } else {
-                            currentProgress = 0
+                        guard let self = self else { return }
+                        self.updateDownload(itemId) { item in
+                            // Get current progress to prevent jumping backwards (video+audio have multiple phases)
+                            let currentProgress: Double
+                            if case .downloading(let p) = item.status {
+                                currentProgress = p
+                            } else {
+                                currentProgress = 0
+                            }
+                            // Only update if progress increased
+                            if progress > currentProgress {
+                                item.status = .downloading(progress: progress)
+                            }
                         }
-
-                        // Only update if progress increased
-                        if progress > currentProgress {
-                            self.downloads[idx].status = .downloading(progress: progress)
-                            self.scheduleSave() // Throttled save during progress
-                        }
+                        self.scheduleSave() // Throttled save during progress
                     }
                 }
             }
 
+            // Post-download: handle result
             guard let idx = downloads.firstIndex(where: { $0.id == itemId }) else { return }
 
             if output.wasCancelled {
@@ -1054,29 +1228,73 @@ final class DownloadViewModel: ObservableObject {
                 if case .paused = downloads[idx].status {
                     // Keep paused state
                 } else {
-                    downloads[idx].status = .failed(message: "Cancelled")
+                    updateDownload(itemId) { $0.status = .failed(message: "Abgebrochen") }
                 }
             } else if output.exitCode == 0 {
-                downloads[idx].status = .completed
-                downloads[idx].downloadSpeed = nil
-                downloads[idx].eta = nil
-                // Try to find the downloaded file
-                if let title = downloads[idx].title {
+                // Capture title before mutation for notification
+                let completedTitle = downloads[idx].title
+                updateDownload(itemId) { item in
+                    item.status = .completed
+                    item.downloadSpeed = nil
+                    item.eta = nil
+                }
+                // Find downloaded file and update path
+                if let title = completedTitle {
                     let expectedFile = findDownloadedFile(title: title)
-                    downloads[idx].outputPath = expectedFile
-                    // Send notification
+                    updateDownload(itemId) { $0.outputPath = expectedFile }
                     sendDownloadCompleteNotification(title: title)
+                }
+                // F4: Add to history
+                if let completedItem = downloads.first(where: { $0.id == itemId }) {
+                    historyManager.addToHistory(completedItem)
                 }
                 logger.info("⏱️ [DONE] Download completed in \(Int(Date().timeIntervalSince(startTime) * 1000))ms: \(itemId)")
             } else {
-                let errorMsg = output.stderr.isEmpty ? "Unknown error" : String(output.stderr.prefix(200))
-                logger.error("⏱️ [ERROR] Download failed after \(Int(Date().timeIntervalSince(startTime) * 1000))ms: \(errorMsg)")
-                downloads[idx].status = .failed(message: errorMsg)
+                // F2: Map error to user-friendly message
+                let mapped = ErrorMapper.map(stderr: output.stderr)
+                logger.error("⏱️ [ERROR] Download failed after \(Int(Date().timeIntervalSince(startTime) * 1000))ms: \(mapped.originalMessage.prefix(200))")
+
+                // Read current retry state safely
+                let retryCount = downloads[idx].retryCount
+                let maxRetries = downloads[idx].maxRetries
+
+                updateDownload(itemId) { $0.errorDetail = mapped.originalMessage }
+
+                // F5: Auto-retry if retryable
+                if mapped.isRetryable && retryCount < maxRetries {
+                    updateDownload(itemId) { $0.retryCount += 1 }
+                    let currentRetry = retryCount + 1
+                    let delaySeconds = [5, 15, 45][min(max(currentRetry - 1, 0), 2)]
+
+                    logger.info("⏱️ [RETRY] Attempt \(currentRetry)/\(maxRetries) in \(delaySeconds)s for \(itemId)")
+
+                    // Countdown with status updates
+                    for remaining in stride(from: delaySeconds, through: 1, by: -1) {
+                        guard updateDownload(itemId, { _ in }) else { return }
+                        // Check if cancelled during retry wait
+                        if let current = downloads.first(where: { $0.id == itemId }),
+                           case .failed = current.status { return }
+                        updateDownload(itemId) { $0.status = .preparing(status: "Retry \(currentRetry)/\(maxRetries) in \(remaining)s...") }
+                        try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    }
+
+                    // Check again if still valid before retrying
+                    guard let retryItem = downloads.first(where: { $0.id == itemId }),
+                          case .preparing = retryItem.status else { return }
+                    scheduleSave(immediate: true)
+                    await performDownload(itemId: itemId, url: url, item: retryItem)
+                    return
+                } else {
+                    updateDownload(itemId) { $0.status = .failed(message: mapped.userMessage) }
+                }
             }
             scheduleSave(immediate: true) // Immediate save on completion/failure
         } catch {
-            guard let idx = downloads.firstIndex(where: { $0.id == itemId }) else { return }
-            downloads[idx].status = .failed(message: error.localizedDescription)
+            let mapped = ErrorMapper.map(stderr: error.localizedDescription)
+            updateDownload(itemId) { item in
+                item.errorDetail = error.localizedDescription
+                item.status = .failed(message: mapped.userMessage)
+            }
             scheduleSave(immediate: true)
         }
 

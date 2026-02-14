@@ -56,19 +56,64 @@ struct ProcessOutput {
     }
 }
 
+/// Thread-safe collector for process output, usable from @Sendable closures.
+private final class ProcessOutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _stdout = Data()
+    private var _stderr = Data()
+
+    func appendStdout(_ data: Data) { lock.lock(); _stdout.append(data); lock.unlock() }
+    func appendStderr(_ data: Data) { lock.lock(); _stderr.append(data); lock.unlock() }
+    var stdout: Data { lock.lock(); defer { lock.unlock() }; return _stdout }
+    var stderr: Data { lock.lock(); defer { lock.unlock() }; return _stderr }
+}
+
+/// Thread-safe collector for string-based process output with progress parsing.
+private final class StreamOutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _stdout = ""
+    private var _stderr = ""
+    private var _wasCancelled = false
+    let maxBufferSize = 512 * 1024  // 512KB cap per buffer
+
+    func appendStdout(_ text: String) { lock.lock(); if _stdout.count < maxBufferSize { _stdout += text }; lock.unlock() }
+    func appendStderr(_ text: String) { lock.lock(); if _stderr.count < maxBufferSize { _stderr += text }; lock.unlock() }
+
+    var stdout: String { lock.lock(); defer { lock.unlock() }; return _stdout }
+    var stderr: String { lock.lock(); defer { lock.unlock() }; return _stderr }
+
+    var wasCancelled: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _wasCancelled }
+        set { lock.lock(); _wasCancelled = newValue; lock.unlock() }
+    }
+}
+
 final class YtDlpManager: YtDlpManagerProtocol {
 
     static let shared = YtDlpManager()
 
     private let fileManager = FileManager.default
-    private let progressRegex = try! NSRegularExpression(
-        pattern: #"\[download\]\s+(\d+(?:\.\d+)?)%"#,
-        options: []
-    )
+    // Safe regex init - pattern is a compile-time constant, so this will never fail,
+    // but we avoid try! on principle to prevent crashes from being possible.
+    private let progressRegex: NSRegularExpression = {
+        // swiftlint:disable:next force_try
+        return (try? NSRegularExpression(
+            pattern: #"\[download\]\s+(\d+(?:\.\d+)?)%"#,
+            options: []
+        )) ?? NSRegularExpression()
+    }()
 
     // Track running processes for cancellation
     private var runningProcesses: [UUID: Process] = [:]
     private let processLock = NSLock()
+    private let maxConcurrentProcesses = 8
+
+    /// Async-safe process count check (avoids calling NSLock from async context)
+    private nonisolated func runningProcessCount() -> Int {
+        processLock.lock()
+        defer { processLock.unlock() }
+        return runningProcesses.count
+    }
 
     // Cache setup check - don't verify binary every time
     private var isSetupComplete = false
@@ -221,6 +266,19 @@ final class YtDlpManager: YtDlpManagerProtocol {
         }
     }
 
+    /// Terminate all running yt-dlp processes (called on app quit)
+    func cancelAllDownloads() {
+        processLock.lock()
+        let processes = runningProcesses
+        runningProcesses.removeAll()
+        processLock.unlock()
+
+        for (id, process) in processes where process.isRunning {
+            logger.info("Terminating process on shutdown: \(id)")
+            process.terminate()
+        }
+    }
+
     func update() async throws -> Bool {
         logger.info("Checking for yt-dlp updates")
 
@@ -296,7 +354,13 @@ final class YtDlpManager: YtDlpManagerProtocol {
     // MARK: - Private Methods
 
     private func executeProcess(at url: URL, arguments: [String]) async throws -> ProcessOutput {
-        try await withCheckedThrowingContinuation { continuation in
+        // Wait until we're below the process limit
+        while runningProcessCount() >= maxConcurrentProcesses {
+            try await Task.sleep(nanoseconds: 250_000_000)
+            if Task.isCancelled { throw CancellationError() }
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
@@ -308,24 +372,16 @@ final class YtDlpManager: YtDlpManagerProtocol {
 
             setupEnvironment(for: process)
 
-            var stdoutData = Data()
-            var stderrData = Data()
-
-            let stdoutQueue = DispatchQueue(label: "stdout")
-            let stderrQueue = DispatchQueue(label: "stderr")
+            let collector = ProcessOutputCollector()
 
             stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
-                if !data.isEmpty {
-                    stdoutQueue.sync { stdoutData.append(data) }
-                }
+                if !data.isEmpty { collector.appendStdout(data) }
             }
 
             stderrPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
-                if !data.isEmpty {
-                    stderrQueue.sync { stderrData.append(data) }
-                }
+                if !data.isEmpty { collector.appendStderr(data) }
             }
 
             process.terminationHandler = { _ in
@@ -335,12 +391,12 @@ final class YtDlpManager: YtDlpManagerProtocol {
                 let remainingStdout = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
                 let remainingStderr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
 
-                stdoutQueue.sync { stdoutData.append(remainingStdout) }
-                stderrQueue.sync { stderrData.append(remainingStderr) }
+                collector.appendStdout(remainingStdout)
+                collector.appendStderr(remainingStderr)
 
                 let output = ProcessOutput(
-                    stdout: String(data: stdoutData, encoding: .utf8) ?? "",
-                    stderr: String(data: stderrData, encoding: .utf8) ?? "",
+                    stdout: String(data: collector.stdout, encoding: .utf8) ?? "",
+                    stderr: String(data: collector.stderr, encoding: .utf8) ?? "",
                     exitCode: process.terminationStatus
                 )
 
@@ -374,7 +430,13 @@ final class YtDlpManager: YtDlpManagerProtocol {
         arguments: [String],
         onProgress: @escaping (Double, String?) -> Void
     ) async throws -> ProcessOutput {
-        try await withCheckedThrowingContinuation { continuation in
+        // Wait until we're below the process limit
+        while runningProcessCount() >= maxConcurrentProcesses {
+            try await Task.sleep(nanoseconds: 250_000_000)
+            if Task.isCancelled { throw CancellationError() }
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
@@ -391,21 +453,19 @@ final class YtDlpManager: YtDlpManagerProtocol {
             runningProcesses[id] = process
             processLock.unlock()
 
-            var stdoutContent = ""
-            var stderrContent = ""
-            var wasCancelled = false
+            let collector = StreamOutputCollector()
 
             stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
                 guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-                stdoutContent += text
+                collector.appendStdout(text)
                 self?.parseProgressAndOutput(from: text, callback: onProgress)
             }
 
             stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
                 guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-                stderrContent += text
+                collector.appendStderr(text)
                 self?.parseProgressAndOutput(from: text, callback: onProgress)
             }
 
@@ -414,7 +474,7 @@ final class YtDlpManager: YtDlpManagerProtocol {
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
 
                 // Check if was cancelled (SIGTERM = 15)
-                wasCancelled = proc.terminationStatus == 15 || proc.terminationReason == .uncaughtSignal
+                collector.wasCancelled = proc.terminationStatus == 15 || proc.terminationReason == .uncaughtSignal
 
                 // Remove from tracking
                 self?.processLock.lock()
@@ -422,10 +482,10 @@ final class YtDlpManager: YtDlpManagerProtocol {
                 self?.processLock.unlock()
 
                 let output = ProcessOutput(
-                    stdout: stdoutContent,
-                    stderr: stderrContent,
+                    stdout: collector.stdout,
+                    stderr: collector.stderr,
                     exitCode: proc.terminationStatus,
-                    wasCancelled: wasCancelled
+                    wasCancelled: collector.wasCancelled
                 )
                 continuation.resume(returning: output)
             }
@@ -465,7 +525,7 @@ final class YtDlpManager: YtDlpManagerProtocol {
             if let percentRange = Range(match.range(at: 1), in: text),
                let percent = Double(text[percentRange]) {
                 DispatchQueue.main.async {
-                    callback(percent / 100.0, nil)
+                    callback(min(1.0, max(0.0, percent / 100.0)), nil)
                 }
             }
         }

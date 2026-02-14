@@ -79,7 +79,9 @@ final class UpdateManager: ObservableObject {
     }
 
     private func fetchLatestRelease() async throws -> GitHubRelease? {
-        let url = URL(string: "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest")!
+        guard let url = URL(string: "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest") else {
+            return nil
+        }
 
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
@@ -112,6 +114,7 @@ final class UpdateManager: ObservableObject {
 
     /// Perform the actual update - called when user clicks update
     func performUpdate() async {
+        guard !isUpdating else { return }
         guard updateAvailable || latestVersion != nil else { return }
 
         isUpdating = true
@@ -184,6 +187,7 @@ final class UpdateManager: ObservableObject {
 
     /// Force a complete reinstall of yt-dlp
     func forceReinstall() async {
+        guard !isUpdating else { return }
         isUpdating = true
         updateMessage = "Reinstalling yt-dlp..."
 

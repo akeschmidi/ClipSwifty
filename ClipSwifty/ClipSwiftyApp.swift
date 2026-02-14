@@ -3,8 +3,18 @@ import os.log
 
 private let logger = Logger(subsystem: "com.clipswifty", category: "App")
 
+/// AppDelegate handles app lifecycle events like termination
+class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillTerminate(_ notification: Notification) {
+        // Kill all running yt-dlp processes to avoid zombie processes
+        YtDlpManager.shared.cancelAllDownloads()
+        logger.info("App terminating - all downloads cancelled")
+    }
+}
+
 @main
 struct ClipSwiftyApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var settings = AppSettings.shared
     @StateObject private var updateManager = UpdateManager.shared
     @StateObject private var downloadViewModel = DownloadViewModel()
@@ -48,7 +58,7 @@ struct ClipSwiftyApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(after: .appInfo) {
-                Button("Check for yt-dlp Updates...") {
+                Button("Nach yt-dlp Updates suchen...") {
                     Task {
                         await updateManager.performUpdate()
                     }
