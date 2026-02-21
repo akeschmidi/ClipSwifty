@@ -34,7 +34,21 @@
 ## Screenshots
 
 <p align="center">
-  <em>Clean, modern interface that fits perfectly into macOS</em>
+  <img src="Screenshots/ClipSwifty_1.png" width="600" alt="ClipSwifty Main Interface">
+  <br>
+  <em>Paste a URL, choose quality, and download – it's that simple</em>
+</p>
+
+<p align="center">
+  <img src="Screenshots/ClipSwifty_2.png" width="600" alt="ClipSwifty Download Progress">
+  <br>
+  <em>Track your downloads with real-time progress</em>
+</p>
+
+<p align="center">
+  <img src="Screenshots/ClipSwifty_3.png" width="600" alt="ClipSwifty Playlist Support">
+  <br>
+  <em>Playlist detected? Choose how many videos to download</em>
 </p>
 
 ## Installation
