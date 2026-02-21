@@ -185,3 +185,43 @@ jobs:
         if: always()
         run: |
           security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
+
+  update-homebrew:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download release ZIP and compute SHA256
+        id: sha
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+          URL="https://github.com/akeschmidi/ClipSwifty/releases/download/v${VERSION}/ClipSwifty.zip"
+          echo "Downloading $URL"
+          curl -L -o ClipSwifty.zip "$URL"
+          SHA256=$(sha256sum ClipSwifty.zip | awk '{print $1}')
+          echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
+          echo "SHA256: $SHA256"
+
+      - name: Update Homebrew Cask
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION="${{ steps.sha.outputs.VERSION }}"
+          SHA256="${{ steps.sha.outputs.SHA256 }}"
+
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/akeschmidi/homebrew-clipswifty.git
+          cd homebrew-clipswifty
+
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" Casks/clipswifty.rb
+          sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" Casks/clipswifty.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/clipswifty.rb
+          git commit -m "Update ClipSwifty to v${VERSION}"
+          git push
