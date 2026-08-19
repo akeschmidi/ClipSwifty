@@ -8,7 +8,7 @@ Project memory lives in `brain/`. At the start of a task, read `brain/INDEX.md` 
 
 Cross-project identity, preferences, and lessons: `~/work/brain/INDEX.md` — load only when needed.
 
-Write durable knowledge back to `brain/` (see `brain/AGENTS.md`). Do not dump chat logs there.
+Write durable knowledge back to `brain/` (see `brain/AGENTS.md`) **before you stop** a task that produced a decision or gotcha. `/learn` or „merk dir das“. Do not dump chat logs. Do not invent lessons.
 
 ## Hard rules
 

@@ -24,4 +24,6 @@ This folder is the durable memory for **this** repo. Global facts live in `~/wor
 
 Update `INDEX.md` when you add a page. Keep `active.md` current; it is the file that goes stale first.
 
+After a decision, gotcha, or scope change: write here **before you stop**. `/learn` works in every repo. Do not invent lessons.
+
 No secrets. No chat logs. No README clones.
