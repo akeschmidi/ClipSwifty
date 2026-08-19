@@ -2,11 +2,9 @@
 
 This folder is the durable memory for **this** repo. Global facts live in `~/work/brain` — do not copy them here.
 
-## Start of every task
+## Load
 
-1. Read `brain/INDEX.md`.
-2. Open only the files it marks as relevant for the task.
-3. Do not load the whole folder.
+Do not read this folder by default. If you lack product/stack/focus: `INDEX.md`, then **≤2 pages**. Prefer `rg`.
 
 ## Where to write
 

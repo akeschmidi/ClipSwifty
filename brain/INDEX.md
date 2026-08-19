@@ -5,9 +5,9 @@ updated: 2026-08-19
 
 # ClipSwifty — brain index
 
-Agents: read this first. Then only the files the task needs.
+Open this only if you lack context. Then **≤2** more files. Prefer `rg`.
 
-## Always
+## Next (pick ≤2)
 
 - [[brief]] — native macOS Downloader, yt-dlp + FFmpeg
 - [[active]] — shipped 1.4.1; Homebrew Cask vorhanden
